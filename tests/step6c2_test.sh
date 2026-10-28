@@ -42,7 +42,7 @@ check "T6b a body format WordPress does not offer is refused" "$(as -X PUT $U/se
 echo "      publishing a DRAFT with a photo, updating it, reading it back, deleting it..."
 # the probe runs with exactly the running service's environment (database address, encryption key), read from its process
 MPID=$(systemctl show -p MainPID --value nour-mkt-ext)
-R=$(sudo env -i $(sudo tr '\0' '\n' < /proc/$MPID/environ | grep -E '^(POSTGRES_DSN|EXT_MKT_|MINIO_|PEXELS_)' | xargs) EXT_SRC=/opt/nour/src \
+R=$(sudo env -i $(sudo cat /proc/$MPID/environ | tr '\0' '\n' | grep -E '^(POSTGRES_DSN|EXT_MKT_|MINIO_|PEXELS_)' | xargs) EXT_SRC=/opt/nour/src \
       /opt/nour/venv/bin/python /tmp/wp_publish_probe.py $SID 2>&1 | tail -1)
 echo "      $R"
 check "T7 a draft is created" "$(echo "$R" | j "(d['created']['status'], d['created']['target'])")" "('draft', 'wordpress')"
