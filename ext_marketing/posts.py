@@ -3,7 +3,7 @@ topic suggestions, and the exact JSON shape the site's app receives."""
 from __future__ import annotations
 import logging
 
-from . import db, jobs, llm, locks, media, meter, profile, rules as R, security, writer
+from . import db, jobs, llm, locks, media, meter, mirror, profile, rules as R, security, website, writer
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.posts")
@@ -46,7 +46,7 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
            "schedule": {"hold": p["hold"], "approvedAt": p.get("approved_at")} if p["status"] in ("approved", "publishing") else None,
            "published": p["published"], "publishedAt": p.get("published_at"), "overrideReason": p.get("override_reason"),
            "requestedBy": p["requested_by"], "reviewedBy": p["reviewed_by"], "createdAt": p["created_at"], "updatedAt": p["updated_at"],
-           "lock": locks.shape(p), "version": p["version"], "actions": actions(p, ed, kinds)}
+           "sourceId": p.get("source_id"), "lock": locks.shape(p), "version": p["version"], "actions": actions(p, ed, kinds)}
     if not full:
         out.pop("content", None)
     else:
@@ -59,16 +59,74 @@ async def create(site: dict, *, topic: str, kind: str, platform: str, language: 
     """One drafting post per language (language 'both' = every site language), linked by pair_id; one job each."""
     langs = list(site["languages"]) if language == "both" else [language]
     pair = security.new_id("pair") if len(langs) > 1 else None
-    ids, jids = [], []
-    for lg in langs:
+    src = await source_language(site) if pair and kind == "blog" else None
+    if src not in langs:
+        src = langs[0] if src else None
+    order = ([src] + [x for x in langs if x != src]) if src else langs
+    ids, jids, source_id = [], [], None
+    for lg in order:
         pid = security.new_id("p")
+        twin = bool(src) and lg != src                                  # an article's twin is translated from the source when it is drafted
         await db.pool().execute(
-            f"""INSERT INTO {S}.posts (id, site_id, kind, platform, language, pair_id, suggestion_id, status, topic, tone, keywords, requested_by)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,'drafting',$8,$9,$10,$11)""",
-            pid, site["id"], kind, platform, lg, pair, suggestion_id, topic[:500], tone, keywords, by)
-        jids.append(await jobs.enqueue(site["account_id"], site["id"], "post.draft", {"postId": pid}))
+            f"""INSERT INTO {S}.posts (id, site_id, kind, platform, language, pair_id, suggestion_id, status, topic, tone, keywords, requested_by, source_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,'drafting',$8,$9,$10,$11,$12)""",
+            pid, site["id"], kind, platform, lg, pair, suggestion_id, topic[:500], tone, keywords, by, source_id if twin else None)
+        if not twin:
+            jids.append(await jobs.enqueue(site["account_id"], site["id"], "post.draft", {"postId": pid}))
+        if lg == src:
+            source_id = pid
         ids.append(pid)
     return ids, jids
+
+
+async def source_language(site: dict) -> str:
+    """The language an article pair is written in first: the website's own main language when its connection reports one
+    (a translation plugin translates from it), else the site's default language."""
+    row = await website.row(site["id"])
+    tp = (((row or {}).get("config") or {}).get("learned") or {}).get("translatepress") or {}
+    main = (tp.get("defaultLanguage") or "").split("_")[0].lower()
+    return main if main in (site["languages"] or []) else site["default_language"]
+
+
+async def _arabic_mode(site_id: str) -> str | None:
+    row = await website.row(site_id)
+    return ((((row or {}).get("config") or {}).get("arabic")) or {}).get("mode")
+
+
+async def twin_findings(p: dict, findings: list) -> list:
+    """A twin's checks: what it inherits from its source is left to the source, and its structure must still match the source
+    (and the source must not have changed since it was translated). On a site whose translations are paired by these pieces
+    (TranslatePress) a mismatch is critical and cannot be overridden; elsewhere it is a warning."""
+    if not p.get("source_id"):
+        return findings
+    s = await db.pool().fetchrow(f"SELECT language, content FROM {S}.posts WHERE id = $1", p["source_id"])
+    if not s:
+        return findings
+    inherited = set((await db.settings(["twin_inherited_checks"])).get("twin_inherited_checks") or [])
+    out = [f for f in findings if f.get("ref") not in inherited]
+    hard = await _arabic_mode(p["site_id"]) == "translatepress"
+    lvl = "critical" if hard else "warn"
+    if mirror.shape(s["content"] or "") != mirror.shape(p.get("content") or ""):
+        out.append({"level": lvl, "ref": "structure", "code": "structure_mismatch", "overridable": not hard,
+                    "message": f"this version no longer has the same headings, paragraphs and lists as the {s['language']} version, in the same "
+                               "order - edit it to match, or ask for changes to translate it again"})
+    elif p.get("source_hash") and mirror.fingerprint(mirror.segments(s["content"] or "")) != p["source_hash"]:
+        out.append({"level": lvl, "ref": "structure", "code": "source_changed", "overridable": not hard,
+                    "message": f"the {s['language']} version changed after this was translated - ask for changes to translate it again"})
+    return out
+
+
+async def refresh_twins(source_id: str) -> None:
+    """After the source changed: twins still in review are translated again; approved or published twins get their checks redone."""
+    for t in await db.pool().fetch(f"SELECT * FROM {S}.posts WHERE source_id = $1", source_id):
+        t = dict(t)
+        if t["status"] == "pending":
+            await db.pool().execute(f"UPDATE {S}.posts SET status = 'drafting', updated_at = now() WHERE id = $1 AND status = 'pending'", t["id"])
+            site = await db.pool().fetchrow(f"SELECT account_id FROM {S}.sites WHERE id = $1", t["site_id"])
+            await jobs.enqueue(site["account_id"], t["site_id"], "post.twin", {"postId": t["id"]})
+        elif t["status"] in ("approved", "failed", "published") and t["content"]:
+            f, seo = await recheck(t)
+            await db.pool().execute(f"UPDATE {S}.posts SET findings = $2, seo = $3, updated_at = now() WHERE id = $1", t["id"], f, seo)
 
 
 async def _auto_photo(site: dict, p: dict, idea: str, alt: str) -> dict | None:
@@ -89,7 +147,7 @@ async def _auto_photo(site: dict, p: dict, idea: str, alt: str) -> dict | None:
 
 async def recheck(p: dict) -> tuple[list, dict]:
     rl, _ = await R.for_site(p["site_id"])
-    f = R.check(p, rl)
+    f = await twin_findings(p, R.check(p, rl))
     return f, {"score": await R.score(f), "checks": [x for x in f if x["level"] != "human"]}
 
 
@@ -104,6 +162,8 @@ async def draft(job: dict) -> dict:
         if job["attempts"] >= int((await db.settings(["job_max_attempts"])).get("job_max_attempts") or 1):
             await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE id=$1 AND status='drafting'",
                                     job["payload"]["postId"], f"Drafting failed ({type(e).__name__}). Ask for a new draft, or tell support if it repeats.")
+            await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE source_id=$1 AND status='drafting' AND content IS NULL",
+                                    job["payload"]["postId"], "The version this is translated from could not be drafted. Ask for changes on it, then here.")
         raise
 
 
@@ -156,10 +216,60 @@ async def _draft(job: dict) -> dict:
                        tokens_in=tin, tokens_out=tout, job_id=job["id"])
     if img and not p["image"]:
         await meter.record(site["account_id"], site["id"], "photos", 1, job_id=job["id"])
+    for t in await db.pool().fetch(f"SELECT id FROM {S}.posts WHERE source_id = $1 AND status = 'drafting'", pid):
+        await jobs.enqueue(site["account_id"], site["id"], "post.twin", {"postId": t["id"]})
+    await refresh_twins(pid)
     return {"postId": pid, "status": "pending", "words": R.words(R.text_of(out["content"])), "critical": sum(1 for f in findings if f["level"] == "critical"),
             "revisions": revisions, "firstPass": rank(first), "kept": rank([f for f in findings if f["level"] in ("critical", "warn")]),
             "strayWords": [stray_first, stray(merged)],
             "photo": bool(img), "sources": len(out["sources"])}
+
+
+@jobs.handler("post.twin")
+async def twin(job: dict) -> dict:
+    """Translates an article's twin from its source; on the LAST attempt any failure leaves the twin 'failed' with a plain message."""
+    try:
+        return await _twin(job)
+    except jobs.Final:
+        raise
+    except Exception as e:                                              # noqa: BLE001
+        if job["attempts"] >= int((await db.settings(["job_max_attempts"])).get("job_max_attempts") or 1):
+            await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE id=$1 AND status='drafting'",
+                                    job["payload"]["postId"], f"Translating failed ({type(e).__name__}). Ask for changes to try again, or tell support if it repeats.")
+        raise
+
+
+async def _twin(job: dict) -> dict:
+    pid = job["payload"]["postId"]
+    p = await db.pool().fetchrow(f"SELECT * FROM {S}.posts WHERE id = $1", pid)
+    if not p or p["status"] != "drafting" or not p["source_id"]:
+        raise jobs.Final("The post is no longer waiting to be translated.")
+    p = dict(p)
+    src = await db.pool().fetchrow(f"SELECT * FROM {S}.posts WHERE id = $1", p["source_id"])
+    if not src or not src["content"] or src["status"] not in ("pending", "approved", "publishing", "published", "failed"):
+        raise jobs.Final("The version this is translated from is not written yet.")
+    src = dict(src)
+    site = dict(await db.pool().fetchrow(f"SELECT * FROM {S}.sites WHERE id = $1", p["site_id"]))
+    out = await writer.translate(site, src, p, note=p["review_note"])
+    await jobs.progress(job["id"], 0.8)
+    img = p["image"]
+    if not img and src["image"]:                                        # the same photo, its own copy (removing one never removes the other)
+        si = src["image"]
+        key = await media.store(site["id"], pid, await media.load(si["key"]), si["ctype"])
+        img = {**si, "key": key, "alt": si.get("alt")}
+    F = ("title", "subtitle", "content", "slug", "meta_title", "meta_description", "keywords", "hashtags")
+    merged = {**p, **{k: out[k] for k in F}, "image": img, "source_hash": out["source_hash"]}
+    findings, seo = await recheck(merged)
+    await db.pool().execute(
+        f"""UPDATE {S}.posts SET title=$2, subtitle=$3, content=$4, slug=$5, meta_title=$6, meta_description=$7, keywords=$8, hashtags=$9,
+               image=$10, sources=$11, findings=$12, seo=$13, source_hash=$14, photo_idea=$15, status='pending', pending_since=now(), error=NULL,
+               review_note=NULL, version=version+1, updated_at=now() WHERE id=$1""",
+        pid, out["title"], out["subtitle"], out["content"], out["slug"], out["meta_title"], out["meta_description"], out["keywords"],
+        out["hashtags"], img, src["sources"] or [], findings, seo, out["source_hash"], src["photo_idea"])
+    await meter.record(site["account_id"], site["id"], "articles", 0 if (p["review_note"] or p["content"]) else 1, tokens_in=out["tokens"][0],
+                       tokens_out=out["tokens"][1], job_id=job["id"])
+    return {"postId": pid, "status": "pending", "pieces": len(mirror.segments(out["content"])),
+            "sourcePieces": len(mirror.segments(src["content"])), "critical": sum(1 for f in findings if f["level"] == "critical")}
 
 
 @jobs.handler("topics.suggest")

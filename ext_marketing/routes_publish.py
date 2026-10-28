@@ -111,7 +111,7 @@ async def changes(site_id: str, pid: str, req: Request):
     if not row:
         p = await _post(site_id, pid)
         raise ApiError(409, "wrong_status", f"Changes can be asked for a post waiting for review, approved, or failed (this one is {p['status']}).")
-    jid = await jobs.enqueue(site["account_id"], site_id, "post.draft", {"postId": pid})
+    jid = await jobs.enqueue(site["account_id"], site_id, "post.twin" if row["source_id"] else "post.draft", {"postId": pid})
     await audit(c.name, "post.changes", account_id=c.account_id, site_id=site_id, target=pid, detail={"note": note[:500]})
     return ok({"jobId": jid, "postId": pid, "status": "drafting"})
 

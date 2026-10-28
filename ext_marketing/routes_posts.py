@@ -239,6 +239,7 @@ async def edit_post(site_id: str, pid: str, req: Request):
         f"WHERE id = $1 AND version = $2 RETURNING *", pid, p["version"], *ch.values(), f, seo)
     if not row:
         raise ApiError(409, "version_conflict", "Someone saved this post first. Reload and try again.")
+    await posts.refresh_twins(pid)                                      # its twins are checked (or translated) again
     await audit(c.name, "post.edit", account_id=c.account_id, site_id=site_id, target=pid, detail={"fields": list(ch)})
     return ok(await posts.shape(dict(row), site_id))
 

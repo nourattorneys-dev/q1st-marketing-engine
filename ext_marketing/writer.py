@@ -2,7 +2,7 @@
 A blog article is written section by section, then a small JSON call writes title/slug/meta/photo idea about the
 finished article. A social post is one JSON call. Nothing names Nour or assumes any category."""
 from __future__ import annotations
-import re
+import json, re
 
 import markdown as _md
 
@@ -323,3 +323,72 @@ def _own_language(proposed, fallback: list, lang: str, rules: dict) -> list:
     ok = [k for k in (proposed or []) if isinstance(k, str) and k.strip()
           and (ms is None or (R.language_share(k, lang, {**rules, "_minLetters": 1}) or 0) >= float(ms))]
     return ok[:10] or fallback
+
+
+# ---------------------------------------------------------------- the twin in the other language (mirrors the source)
+async def translate(site: dict, source: dict, twin: dict, note: str | None = None) -> dict:
+    """Writes the twin of an article from its source: every text piece of the source's HTML is translated in order and put
+    back into the same HTML, so the structure matches by construction. The model translates; the code counts what came back
+    and asks again (with the counts) when a batch has a different number of pieces."""
+    from . import mirror as M
+    s = await db.settings(["twin_segments_per_call", "twin_max_tokens", "twin_temperature", "meta_retry", "writer_max_tokens_meta"])
+    rules, _ = await R.for_site(site["id"])
+    facts = await profile.brief(site)
+    lang, src_lang = twin["language"], source["language"]
+    ln, sn = LANG.get(lang, lang), LANG.get(src_lang, src_lang)
+    pieces = M.segments(source["content"] or "")
+    size = max(1, int(s.get("twin_segments_per_call") or 40))
+    tk = [0, 0]
+    guide = (f"You translate a website article from {sn} into {ln} for the website below. Write natural, fluent {ln} as a native "
+             "writer would, keeping the meaning, facts, names and numbers exactly; never add or drop content. The text comes as a "
+             "JSON list of pieces in reading order; some pieces are parts of one sentence (split around bold text or links): "
+             "translate each piece so that the pieces, read in order, form a natural sentence. Answer ONLY JSON: "
+             "{\"pieces\": [\"...\"]} with exactly as many pieces as given, in the same order.\n" + facts
+             + (f"\nThe reviewer asked for this - follow it while keeping every piece: {note}" if note else ""))
+    out: list[str] = []
+    for i in range(0, len(pieces), size):
+        batch = pieces[i:i + size]
+        note, got = "", None
+        for _ in range(1 + int(s.get("meta_retry") or 0)):
+            raw = await _ask([{"role": "system", "content": guide + note},
+                              {"role": "user", "content": json.dumps({"context": pieces[max(0, i - 3):i], "pieces": batch}, ensure_ascii=False)}],
+                             s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
+            try:
+                cand = [str(x) for x in (llm.json_from(raw).get("pieces") or [])]
+            except ValueError:
+                cand = []
+            if len(cand) == len(batch) and all(x.strip() for x in cand):
+                got = cand
+                break
+            note = (f"\nYour previous answer had {len(cand)} pieces for {len(batch)} given. Answer with exactly {len(batch)} pieces, "
+                    "one for each given piece, in the same order.")
+        if got is None:
+            raise ValueError(f"the translation did not keep the article's {len(batch)} pieces")
+        out += got
+    content = M.rebuild(source["content"] or "", out)
+    # the short fields: translated together, lengths measured against the site's bands (one retry with the measured values)
+    fields = {"title": source.get("title") or "", "subtitle": source.get("subtitle") or "", "metaTitle": source.get("meta_title") or "",
+              "metaDescription": source.get("meta_description") or "", "keywords": source.get("keywords") or []}
+    bands = {"metaTitle": rules.get("metaTitle"), "metaDescription": rules.get("metaDescription")}
+    note, short = "", {}
+    for _ in range(1 + int(s.get("meta_retry") or 0)):
+        raw = await _ask([
+            {"role": "system", "content": f"Translate these fields of the same article from {sn} into {ln}, naturally. keywords: give them as "
+                                          f"people in this market search in {ln} for the same intent, not word for word. Limits: metaTitle "
+                                          f"{bands['metaTitle']} characters, metaDescription {bands['metaDescription']} characters. "
+                                          "Answer ONLY JSON with the same keys." + note + "\n" + facts},
+            {"role": "user", "content": json.dumps(fields, ensure_ascii=False)}], s["writer_max_tokens_meta"], 0.2, tk)
+        try:
+            short = llm.json_from(raw)
+        except ValueError:
+            short = {}
+        miss = [f"{k} is {len(short.get(k) or '')} characters; it must be {b[0]}-{b[1]}" for k, b in bands.items()
+                if b and short.get(k) and not b[0] <= len(short[k]) <= b[1]]
+        if short.get("title") and not miss:
+            break
+        note = "\nYour previous answer did not fit: " + ("; ".join(miss) or "no title") + ". Answer again."
+    kws = _own_language(short.get("keywords"), twin.get("keywords") or [], lang, rules)
+    return {"title": (short.get("title") or twin.get("topic") or "")[:255], "subtitle": (short.get("subtitle") or "")[:300], "content": content,
+            "slug": _slug(short.get("title") or "") or source.get("slug") or "", "meta_title": (short.get("metaTitle") or "")[:255],
+            "meta_description": (short.get("metaDescription") or "")[:400], "keywords": kws, "hashtags": [],
+            "source_hash": M.fingerprint(pieces), "tokens": tuple(tk)}

@@ -113,20 +113,25 @@ async def state(site: dict) -> dict:
     conn = await website.row(site["id"])
     queue = [dict(x) for x in await db.pool().fetch(
         f"SELECT * FROM {S}.posts WHERE site_id = $1 AND status IN ('approved','publishing') ORDER BY approved_at, id", site["id"])]
+    srcs = [p["source_id"] for p in queue if p.get("source_id")]
+    src_status = {r["id"]: r["status"] for r in await db.pool().fetch(f"SELECT id, status FROM {S}.posts WHERE id = ANY($1)", srcs)} if srcs else {}
+    paired = (((conn or {}).get("config") or {}).get("arabic") or {}).get("mode") == "translatepress"
     return {"cfg": cfg, "now": now, "today": int(row["today"] or 0), "last": row["last"], "queue": queue, "kinds": kinds,
-            "connected": bool(conn and conn["secret_enc"] and conn["status"] == "ok")}
+            "connected": bool(conn and conn["secret_enc"] and conn["status"] == "ok"),
+            "waitsForSource": {p["id"] for p in queue if paired and p.get("source_id") and src_status.get(p["source_id"]) != "published"}}
 
 
 def plan(site: dict, st: dict) -> tuple[list[dict], str | None, datetime | None]:
     """Queue positions and expected times. Only posts of a publishable kind and not on hold take a slot."""
-    takes = [p for p in st["queue"] if p["status"] == "approved" and not p["hold"] and p["kind"] in st["kinds"]]
+    takes = [p for p in st["queue"] if p["status"] == "approved" and not p["hold"] and p["kind"] in st["kinds"]
+             and p["id"] not in st.get("waitsForSource", set())]
     live = st["cfg"].get("autoPublish") and st["connected"]
     times = slots(st["cfg"], site["timezone"], st["now"], st["today"], st["last"], len(takes)) if live else []
     when = {p["id"]: (times[i] if i < len(times) else None) for i, p in enumerate(takes)}
     rows = []
     for i, p in enumerate(st["queue"]):
         why = ("publishing" if p["status"] == "publishing" else "on_hold" if p["hold"] else
-               "no_channel" if p["kind"] not in st["kinds"] else None)
+               "no_channel" if p["kind"] not in st["kinds"] else "source_not_published" if p["id"] in st.get("waitsForSource", set()) else None)
         rows.append({"post": p, "position": i + 1, "expectedAt": when.get(p["id"]), "waiting": why})
     r = reason(st["cfg"], site["timezone"], st["now"], st["today"], st["last"], len(takes), st["connected"])
     nxt = slots(st["cfg"], site["timezone"], st["now"], st["today"], st["last"], 1) if live else []
@@ -153,6 +158,8 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
     try:
         if not conn or not conn["secret_enc"] or not t.get("type"):
             raise Failed("The website is not connected. Open Settings → Website connection and save a working connection.")
+        if p.get("source_id") and (t.get("arabic") or {}).get("mode") == "translatepress":
+            raise Failed("This version is published as the translation of its source page; that step is not switched on for this site yet.")
         img = p.get("image") or None
         image = None
         if img and img.get("key"):
