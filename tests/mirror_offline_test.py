@@ -25,7 +25,7 @@ ok("a removed bold changes the structure", M.shape(H1.replace("<strong>VAT</stro
 ok("empty article: no pieces", M.segments("") == [] and M.rebuild("", []) == "")
 
 # the translation step with a mocked model
-SET = {"twin_segments_per_call": 3, "twin_max_tokens": 100, "twin_temperature": 0.2, "meta_retry": 1, "writer_max_tokens_meta": 100}
+SET = {"twin_segments_per_call": 3, "twin_max_tokens": 100, "twin_temperature": 0.2, "twin_retries": 2, "twin_punctuation": {"ar": {"?": "؟"}}, "meta_retry": 1, "writer_max_tokens_meta": 100}
 async def fs(keys=None): return {k: SET.get(k) for k in (keys or SET)}
 db.settings = fs
 async def fr(sid): return ({"metaTitle": [10, 60], "metaDescription": [20, 160], "_scripts": {"ar": "[؀-ۿ]"}, "_minShare": 0.6, "_minLetters": 1}, 0)
@@ -36,12 +36,15 @@ CALLS = {"pieces": 0, "fields": 0}
 MODE = {}
 async def chat(messages, max_tokens, temperature=0.3):
     sysm, user = messages[0]["content"], json.loads(messages[1]["content"])
-    if "JSON list of pieces" in sysm:
+    if "pieces with ids" in sysm:
         CALLS["pieces"] += 1
-        n = len(user["pieces"])
-        if MODE.get("short_once") and "previous answer had" not in sysm:
-            return json.dumps({"pieces": ["ترجمة"] * (n - 1)}), 1, 1          # one piece missing -> must be asked again with the count
-        return json.dumps({"pieces": [f"ترجمة {i}" for i in range(n)]}), 1, 1
+        CALLS.setdefault("sent", []).extend(user["pieces"].values())
+        keys = list(user["pieces"])
+        if MODE.get("drop_once") and "were missing" not in sysm:
+            keys = keys[:-1]                                            # one id left out -> only that id is asked again
+        if MODE.get("as_list"):
+            return json.dumps({"pieces": [f"ترجمة {k}" for k in keys]}), 1, 1
+        return json.dumps({"pieces": {k: f"ترجمة {k}" for k in keys}}), 1, 1
     CALLS["fields"] += 1
     return json.dumps({"title": "عنوان المقال", "subtitle": "سطر", "metaTitle": "عنوان ميتا مناسب الطول",
                        "metaDescription": "وصف ميتا مناسب الطول لهذه المقالة", "keywords": ["ضريبة القيمة المضافة"]}), 1, 1
@@ -50,19 +53,25 @@ async def main():
     src = {"language": "en", "content": H1, "title": "What is VAT", "subtitle": "s", "meta_title": "m", "meta_description": "d", "keywords": ["vat"], "slug": "vat"}
     tw = {"language": "ar", "keywords": [], "topic": "t"}
     out = await writer.translate({"id": "s"}, src, tw)
-    ok("twin built in batches (8 pieces, 3 per call)", CALLS["pieces"] == 3, CALLS)
+    ok("only pieces with letters go to the model (6 of 8), in batches of 3", CALLS["pieces"] == 2 and len(CALLS["sent"]) == 6
+       and "?" not in CALLS["sent"] and "." not in CALLS["sent"], CALLS)
+    ok("a punctuation-only piece takes the target language's punctuation", "؟" in out["content"], out["content"])
     ok("twin structure equals the source", M.shape(out["content"]) == M.shape(H1))
     ok("twin remembers which source it was made from", out["source_hash"] == M.fingerprint(s1))
     ok("short fields translated, keywords in the twin's language", (out["title"], out["keywords"]) == ("عنوان المقال", ["ضريبة القيمة المضافة"]), out)
-    CALLS["pieces"] = 0; MODE["short_once"] = True
+    CALLS.clear(); CALLS.update(pieces=0, fields=0); MODE["drop_once"] = True
     out = await writer.translate({"id": "s"}, src, tw)
-    ok("a batch with a missing piece is asked again with the counts", CALLS["pieces"] == 6 and M.shape(out["content"]) == M.shape(H1), CALLS)
+    ok("a left-out piece is asked for again, alone", CALLS["pieces"] == 4 and len(CALLS["sent"]) == 8 and M.shape(out["content"]) == M.shape(H1), CALLS)
+    MODE.clear(); MODE["as_list"] = True; CALLS.clear(); CALLS.update(pieces=0, fields=0)
+    out = await writer.translate({"id": "s"}, src, tw)
+    ok("an answer given as a list of the right length is still used", M.shape(out["content"]) == M.shape(H1) and CALLS["pieces"] == 2, CALLS)
+    MODE.clear()
     async def never(messages, max_tokens, temperature=0.3):
-        return json.dumps({"pieces": ["x"]}), 1, 1
+        return json.dumps({"pieces": {}}), 1, 1
     llm.chat = never
     try:
-        await writer.translate({"id": "s"}, src, tw); ok("a translation that never keeps the pieces fails (no broken twin)", False)
+        await writer.translate({"id": "s"}, src, tw); ok("a translation that keeps leaving pieces out fails (no broken twin)", False)
     except ValueError:
-        ok("a translation that never keeps the pieces fails (no broken twin)", True)
+        ok("a translation that keeps leaving pieces out fails (no broken twin)", True)
 asyncio.run(main())
 print("-----"); print(f"PASSED {P}   FAILED {F}")

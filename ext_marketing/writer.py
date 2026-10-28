@@ -331,7 +331,8 @@ async def translate(site: dict, source: dict, twin: dict, note: str | None = Non
     back into the same HTML, so the structure matches by construction. The model translates; the code counts what came back
     and asks again (with the counts) when a batch has a different number of pieces."""
     from . import mirror as M
-    s = await db.settings(["twin_segments_per_call", "twin_max_tokens", "twin_temperature", "meta_retry", "writer_max_tokens_meta"])
+    s = await db.settings(["twin_segments_per_call", "twin_max_tokens", "twin_temperature", "twin_retries", "twin_punctuation",
+                           "meta_retry", "writer_max_tokens_meta"])
     rules, _ = await R.for_site(site["id"])
     facts = await profile.brief(site)
     lang, src_lang = twin["language"], source["language"]
@@ -339,32 +340,42 @@ async def translate(site: dict, source: dict, twin: dict, note: str | None = Non
     pieces = M.segments(source["content"] or "")
     size = max(1, int(s.get("twin_segments_per_call") or 40))
     tk = [0, 0]
+    # pieces without letters (punctuation, numbers, symbols) are not language: kept, with the target language's punctuation
+    punct = (s.get("twin_punctuation") or {}).get(lang) or {}
+    words = [i for i, p in enumerate(pieces) if re.search(r"[^\W\d_]", p)]
+    out = ["".join(punct.get(ch, ch) for ch in p) for p in pieces]
     guide = (f"You translate a website article from {sn} into {ln} for the website below. Write natural, fluent {ln} as a native "
-             "writer would, keeping the meaning, facts, names and numbers exactly; never add or drop content. The text comes as a "
-             "JSON list of pieces in reading order; some pieces are parts of one sentence (split around bold text or links): "
+             "writer would, keeping the meaning, facts, names and numbers exactly; never add or drop content. The text comes as "
+             "pieces with ids, in reading order; some pieces are parts of one sentence (split around bold text or links): "
              "translate each piece so that the pieces, read in order, form a natural sentence. Answer ONLY JSON: "
-             "{\"pieces\": [\"...\"]} with exactly as many pieces as given, in the same order.\n" + facts
+             "{\"pieces\": {\"<id>\": \"translation\", ...}} with every id given, each translated on its own.\n" + facts
              + (f"\nThe reviewer asked for this - follow it while keeping every piece: {note}" if note else ""))
-    out: list[str] = []
-    for i in range(0, len(pieces), size):
-        batch = pieces[i:i + size]
-        note, got = "", None
-        for _ in range(1 + int(s.get("meta_retry") or 0)):
-            raw = await _ask([{"role": "system", "content": guide + note},
-                              {"role": "user", "content": json.dumps({"context": pieces[max(0, i - 3):i], "pieces": batch}, ensure_ascii=False)}],
+    for b0 in range(0, len(words), size):
+        batch = words[b0:b0 + size]
+        todo = {f"p{i + 1}": pieces[i] for i in batch}
+        done: dict = {}
+        for attempt in range(1 + int(s.get("twin_retries") or 0)):
+            ask = {k: v for k, v in todo.items() if k not in done}
+            if not ask:
+                break
+            first = int(next(iter(ask))[1:]) - 1
+            ctx = [pieces[j] for j in range(max(0, first - 3), first)]
+            raw = await _ask([{"role": "system", "content": guide + ("" if not attempt else
+                               f"\nThese ids were missing from your previous answer: {', '.join(ask)}. Translate exactly these.")},
+                              {"role": "user", "content": json.dumps({"before": ctx, "pieces": ask}, ensure_ascii=False)}],
                              s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
             try:
-                cand = [str(x) for x in (llm.json_from(raw).get("pieces") or [])]
+                got = llm.json_from(raw).get("pieces") or {}
             except ValueError:
-                cand = []
-            if len(cand) == len(batch) and all(x.strip() for x in cand):
-                got = cand
-                break
-            note = (f"\nYour previous answer had {len(cand)} pieces for {len(batch)} given. Answer with exactly {len(batch)} pieces, "
-                    "one for each given piece, in the same order.")
-        if got is None:
-            raise ValueError(f"the translation did not keep the article's {len(batch)} pieces")
-        out += got
+                got = {}
+            if isinstance(got, list):                                   # answered a list: only usable when it lines up one to one
+                got = dict(zip(ask, got)) if len(got) == len(ask) else {}
+            done.update({k: str(v).strip() for k, v in got.items() if k in ask and isinstance(v, (str, int, float)) and str(v).strip()})
+        missing = [k for k in todo if k not in done]
+        if missing:
+            raise ValueError(f"the translation left out {len(missing)} of the article's pieces after every retry")
+        for k, v in done.items():
+            out[int(k[1:]) - 1] = v
     content = M.rebuild(source["content"] or "", out)
     # the short fields: translated together, lengths measured against the site's bands (one retry with the measured values)
     fields = {"title": source.get("title") or "", "subtitle": source.get("subtitle") or "", "metaTitle": source.get("meta_title") or "",
