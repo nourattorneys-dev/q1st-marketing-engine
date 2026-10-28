@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Q1st Connector
  * Description: Lets the Quantum1st marketing engine publish approved articles to this site: signs it in on hosts that drop the login header, writes the SEO title and description, stores an article's translation in TranslatePress, and reports what the site has.
- * Version: 0.3.3
+ * Version: 0.4.0
  * Requires at least: 5.6
  * Requires PHP: 7.4
  * Author: Quantum1st
@@ -11,7 +11,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('Q1ST_CONNECTOR_VERSION', '0.3.3');
+define('Q1ST_CONNECTOR_VERSION', '0.4.0');
 
 /*
  * Sign-in. Many hosts remove the standard Authorization header before WordPress sees it, so the engine also sends the
@@ -147,29 +147,43 @@ function q1st_translate($r) {
         return new WP_Error('nothing_matched', 'None of the article\'s text was found on the published page.', array('status' => 409, 'rendered' => count($rendered)));
     }
     $originals = array_keys($pairs);
-    // TranslatePress adds any piece it does not know yet, as it does for a visitor; the 4th argument lists the strings it must
-    // not machine-translate: all of ours (they are translated already)
-    $render->process_strings($originals, $code, 0, $originals);
-    $rows = $q->get_existing_translations($originals, $code, 0);
-    $update = array();
-    foreach ($originals as $o) {
-        if (!isset($rows[$o])) { continue; }
-        $row = (array) $rows[$o];
-        $row['translated'] = $pairs[$o];
-        $row['status'] = 2;                                             // reviewed by a person
-        $update[] = $row;
+    // written straight into TranslatePress' own two tables (its add function only adds strings while rendering a page to a
+    // visitor); the columns are checked first, so a TranslatePress change is refused in plain words instead of guessed at
+    global $wpdb;
+    $orig_t = $wpdb->prefix . 'trp_original_strings';
+    $dict_t = $wpdb->prefix . 'trp_dictionary_' . strtolower($settings['default-language']) . '_' . strtolower($code);
+    $meta_t = $wpdb->prefix . 'trp_original_meta';
+    $need = array($orig_t => array('id', 'original'), $dict_t => array('id', 'original', 'translated', 'status', 'block_type', 'original_id'));
+    foreach ($need as $tbl => $cols) {
+        $have = $wpdb->get_col("SHOW COLUMNS FROM `" . esc_sql($tbl) . "`");
+        if (array_diff($cols, (array) $have)) {
+            return new WP_Error('translatepress_changed', 'TranslatePress stores translations differently on this site than expected (' . $tbl . '). Update the Q1st Connector plugin.', array('status' => 409));
+        }
     }
-    if ($update) { $q->update_strings($update, $code, array('id', 'translated', 'status')); }
-    $check = $q->get_existing_translations($originals, $code, 0);
+    $has_meta = (bool) $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $meta_t));
+    $written = 0;
+    foreach ($pairs as $o => $tr) {
+        $oid = $wpdb->get_var($wpdb->prepare("SELECT id FROM `$orig_t` WHERE original = %s LIMIT 1", $o));
+        if (!$oid) {
+            $wpdb->insert($orig_t, array('original' => $o), array('%s'));
+            $oid = $wpdb->insert_id;
+        }
+        $did = $wpdb->get_var($wpdb->prepare("SELECT id FROM `$dict_t` WHERE original = %s LIMIT 1", $o));
+        $row = array('original' => $o, 'translated' => $tr, 'status' => 2, 'block_type' => 0, 'original_id' => (int) $oid);
+        $ok = $did ? $wpdb->update($dict_t, $row, array('id' => (int) $did), array('%s', '%s', '%d', '%d', '%d'), array('%d'))
+                   : $wpdb->insert($dict_t, $row, array('%s', '%s', '%d', '%d', '%d'));
+        if ($ok !== false) { $written++; }
+        if ($has_meta && $oid && !$wpdb->get_var($wpdb->prepare("SELECT meta_id FROM `$meta_t` WHERE original_id = %d AND meta_key = 'post_parent_id' AND meta_value = %s", $oid, (string) $p->ID))) {
+            $wpdb->insert($meta_t, array('original_id' => (int) $oid, 'meta_key' => 'post_parent_id', 'meta_value' => (string) $p->ID));
+        }
+    }
+    if (function_exists('wp_cache_flush_group')) { wp_cache_flush_group('trp'); }
     $stored = 0;
-    foreach ($originals as $o) {
-        if (isset($check[$o]) && (int) $check[$o]->status === 2 && $check[$o]->translated === $pairs[$o]) { $stored++; }
+    foreach ($pairs as $o => $tr) {
+        $r2 = $wpdb->get_row($wpdb->prepare("SELECT translated, status FROM `$dict_t` WHERE original = %s LIMIT 1", $o));
+        if ($r2 && (int) $r2->status === 2 && $r2->translated === $tr) { $stored++; }
     }
-    $first = $rows ? reset($rows) : null;
-    $debug = array('found' => is_array($rows) ? count($rows) : gettype($rows), 'updated' => count($update),
-                   'ourKeys' => array_slice($originals, 0, 2), 'theirKeys' => is_array($rows) ? array_slice(array_keys($rows), 0, 2) : null,
-                   'rowShape' => $first ? array_keys((array) $first) : null,
-                   'afterUpdate' => ($c = $check ? reset($check) : null) ? array('status' => $c->status, 'translated' => mb_substr((string) $c->translated, 0, 40)) : null);
+    $debug = array('written' => $written, 'dbError' => $wpdb->last_error ?: null, 'table' => $dict_t);
     return array('language' => $code, 'sent' => count((array) $b['pieces']), 'matched' => count($pairs), 'stored' => $stored,
                  'missed' => $missed, 'renderedPieces' => count($rendered), 'debug' => $debug,
                  'url' => trailingslashit(home_url()) . (isset($settings['url-slugs'][$code]) ? $settings['url-slugs'][$code] : $code) . '/' . $p->post_name . '/');
