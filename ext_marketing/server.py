@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 import asyncio
 
-from . import db, jobs, keywords, posts, routes_admin, routes_client, routes_content, routes_posts, routes_website  # noqa: F401 (keywords/posts register their jobs)
+from . import db, jobs, keywords, posts, routes_admin, routes_client, routes_content, routes_posts, routes_publish, routes_website, publishing  # noqa: F401 (keywords/posts register their jobs)
 from .auth import ApiError
 from . import idempotency, website
 
@@ -28,13 +28,15 @@ async def lifespan(app: FastAPI):
     if missing:
         log.error("missing env: %s -- admin/secrets will refuse", ", ".join(missing))
     worker = asyncio.create_task(jobs.loop())
+    sched = asyncio.create_task(publishing.loop())
     log.info("ext_marketing up")
     yield
-    jobs.stop()
-    try:
-        await asyncio.wait_for(worker, timeout=10)
-    except Exception:                                                   # noqa: BLE001
-        worker.cancel()
+    jobs.stop(); publishing.stop()
+    for task in (worker, sched):
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except Exception:                                               # noqa: BLE001
+            task.cancel()
     await db.close_pool()
 
 
@@ -46,6 +48,7 @@ app.include_router(routes_admin.r)
 app.include_router(routes_website.r)
 app.include_router(routes_content.r)
 app.include_router(routes_posts.r)
+app.include_router(routes_publish.r)
 
 
 def err(status: int, code: str, message: str, **extra):

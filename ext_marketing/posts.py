@@ -9,22 +9,28 @@ S = db.SCHEMA
 log = logging.getLogger("ext_marketing.posts")
 
 
-def actions(p: dict, editable: list) -> list:
-    st = p["status"]
-    a = []
+def actions(p: dict, editable: list, kinds: list | None = None) -> list:
+    """The buttons a site's app shows for this post (the app never works the rules out itself)."""
+    st, a = p["status"], []
+    pub_fail = st == "failed" and p.get("approved_at") is not None    # failed while publishing (a failed draft has no approval)
     if st in editable:
-        a += ["edit", "photo", "delete"]
+        a += ["edit", "photo"]
     if st == "pending":
         a += ["approve", "changes", "reject"]
-    if st in ("approved", "failed"):
-        a += ["publishNow", "hold" if not p.get("hold") else "resume"]
-    if st == "rejected":
+    if st == "approved":
+        a += (["publishNow"] if p["kind"] in (kinds or []) else []) + ["resume" if p.get("hold") else "hold", "changes", "reject"]
+    if pub_fail:
+        a += (["retry"] if p["kind"] in (kinds or []) else []) + ["changes", "reject"]
+    elif st == "failed":
+        a += ["changes"]
+    if st in ("pending", "rejected", "failed") or st in editable:
         a += ["delete"]
     return list(dict.fromkeys(a))
 
 
 async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
-    ed = (await db.settings(["editable_statuses"])).get("editable_statuses") or ["pending"]
+    s = await db.settings(["editable_statuses", "publish_kinds"])
+    ed, kinds = s.get("editable_statuses") or ["pending"], s.get("publish_kinds") or []
     img = p.get("image") or None
     twin = None
     if p.get("pair_id"):
@@ -37,9 +43,10 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
            "image": ({"url": f"/api/v1/sites/{site_id}/media/{p['id']}?v={p['version']}", "alt": img.get("alt"), "credit": img.get("credit"),
                       "source": img.get("source"), "pexelsId": img.get("pexelsId")} if img else None),
            "sources": p["sources"], "findings": p["findings"], "seo": p["seo"], "reviewNote": p["review_note"], "error": p["error"],
-           "schedule": {"hold": p["hold"]} if p["status"] == "approved" else None, "published": p["published"],
+           "schedule": {"hold": p["hold"], "approvedAt": p.get("approved_at")} if p["status"] in ("approved", "publishing") else None,
+           "published": p["published"], "publishedAt": p.get("published_at"), "overrideReason": p.get("override_reason"),
            "requestedBy": p["requested_by"], "reviewedBy": p["reviewed_by"], "createdAt": p["created_at"], "updatedAt": p["updated_at"],
-           "lock": locks.shape(p), "version": p["version"], "actions": actions(p, ed)}
+           "lock": locks.shape(p), "version": p["version"], "actions": actions(p, ed, kinds)}
     if not full:
         out.pop("content", None)
     else:

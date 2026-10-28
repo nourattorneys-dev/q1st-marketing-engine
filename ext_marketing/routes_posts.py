@@ -250,6 +250,8 @@ async def delete_post(site_id: str, pid: str, req: Request):
     locks.guard(c, p)
     if p["status"] == "published":
         raise ApiError(409, "published", "A published post cannot be deleted here; remove it in the site's CMS.")
+    if p["status"] == "publishing":
+        raise ApiError(409, "wrong_status", "The post is being published right now. Try again in a moment.")
     await media.remove((p["image"] or {}).get("key"))
     await db.pool().execute(f"DELETE FROM {S}.posts WHERE id = $1", pid)
     if p["suggestion_id"]:
