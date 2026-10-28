@@ -57,6 +57,15 @@
         <td>{{ (T.mc_mode_hard if q.mode == 'hard' else T.mc_mode_soft) if q.mode else '—' }}</td></tr>{% endfor %}
     </table></div></div>
 
+  {% set open_ups = (d.upgradeRequests or []) | selectattr("status", "equalto", "open") | list %}
+  {% if d.upgradeRequests %}<div class="n-card"><div class="n-hd n-hd-2">{{ ic("finance") }}<div><h2>{{ T.mc_requests }}{{ hint(T.mc_requests_h) }}</h2></div>{% if open_ups %}{{ badge(T.mc_requests_open | replace("{n}", open_ups | length | string), "warn") }}{% endif %}</div>
+    <div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_metric }}</th><th>{{ T.mc_req_note }}</th><th>{{ T.mc_req_by }}</th><th>{{ T.mc_created }}</th><th>{{ T.mc_status }}</th><th></th></tr></thead>
+      {% for u in d.upgradeRequests %}<tr><td>{{ metrics | selectattr("key", "equalto", u.metric) | map(attribute="label") | first if u.metric else T.mc_req_any }}</td>
+        <td>{{ u.note or '' }}</td><td>{{ u.by or '' }}{% if u.siteId %}<div class="n-mut n-sm">{{ site_name.get(u.siteId, u.siteId) }}</div>{% endif %}</td><td class="mut num">{{ when(u.at) }}</td>
+        <td>{{ badge(T['mc_req_' ~ u.status], 'warn' if u.status == 'open' else ('ok' if u.status == 'done' else 'n')) }}</td>
+        <td>{% if u.status == 'open' %}<div class="n-row" style="gap:6px">{% for st in ('done', 'declined') %}<form method="post" action="/marketing-clients/{{ a.id }}/requests/{{ u.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ st }}"><button class="n-btn s{{ ' p' if st == 'done' else '' }}">{{ T['mc_req_mark_' ~ st] }}</button></form>{% endfor %}</div>{% endif %}</td></tr>{% endfor %}
+    </table></div></div>{% endif %}
+
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("users") }}<div><h2>{{ T.mc_name }}</h2></div>{{ badge(T['mc_st_' ~ a.status], 'ok' if a.status == 'active' else ('warn' if a.status == 'suspended' else 'n')) }}</div>
     <form method="post" action="/marketing-clients/{{ a.id }}/update" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="version" value="{{ a.version }}">
       <div class="n-field"><label for="ac-name">{{ T.mc_name }}</label><input class="n-in" id="ac-name" name="name" value="{{ a.name }}" required style="width:220px"></div>
@@ -69,7 +78,7 @@
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_sites }}</h2></div></div>
     {% if d.sites %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_site_name }}</th><th>{{ T.mc_category }}</th><th>{{ T.mc_languages }}</th><th>{{ T.mc_conn }}</th><th></th></tr></thead>
       {% for s in d.sites %}<tr><td>{{ s.name }}{% if live_keys.get(s.id, 0) > 1 %} {{ badge(T.mc_keys_many | replace("{n}", live_keys.get(s.id) | string), "warn", True, T.mc_keys_many_h) }}{% endif %}<div class="n-mut n-sm" dir="ltr">{{ s.url }} · <code>{{ s.id }}</code></div></td><td>{{ s.category or '—' }}</td><td>{{ s.languages | join(', ') }}</td>
-        <td>{% for t, st in s.connections.items() %}{{ badge(t, 'ok' if st == 'ok' else ('warn' if st in ('expiring', 'error') else 'n'), True) }} {% endfor %}</td>
+        <td>{% for t, c in s.connections.items() %}{% set st = c.status if c is mapping else c %}{{ badge(((c.type or t) if c is mapping else t), 'ok' if st == 'ok' else ('warn' if st in ('expiring', 'error') else 'n'), True) }} {% endfor %}</td>
         <td><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ s.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s d" data-confirm="{{ T.mc_site_delete_q }}" data-confirm-kind="danger">{{ T.mc_site_delete }}</button></form></td></tr>{% endfor %}
     </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_no_sites }}</div>{% endif %}
     <form method="post" action="/marketing-clients/{{ a.id }}/sites/new" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -100,7 +109,7 @@
         <td><form method="post" action="/marketing-clients/{{ a.id }}/overrides/{{ o.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s d" data-confirm="{{ T.mc_remove_q }}" data-confirm-kind="warn">{{ T.mc_remove }}</button></form></td></tr>{% endfor %}
     </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_no_overrides }}</div>{% endif %}
     <form method="post" action="/marketing-clients/{{ a.id }}/overrides" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="n-field"><label for="o-m">{{ T.mc_metric }}</label><select class="n-in" id="o-m" name="metric">{% for m in meta.metrics or [] %}<option value="{{ m.key }}">{{ m.label }}</option>{% endfor %}</select></div>
+      <div class="n-field"><label for="o-m">{{ T.mc_metric }}</label><select class="n-in" id="o-m" name="metric">{% for m in metrics or [] %}<option value="{{ m.key }}">{{ m.label }}</option>{% endfor %}</select></div>
       <div class="n-field"><label for="o-s">{{ T.mc_scope }}</label><select class="n-in" id="o-s" name="site_id"><option value="">{{ T.mc_scope_all }}</option>{% for s in d.sites or [] %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div>
       <div class="n-field"><label for="o-l">{{ T.mc_limit }}{{ hint(T.mc_limit_h) }}</label><input class="n-in" id="o-l" name="limit" inputmode="numeric" placeholder="{{ T.mc_unlimited }}" style="width:110px"></div>
       <div class="n-field"><label for="o-mo">{{ T.mc_mode }}</label><select class="n-in" id="o-mo" name="mode"><option value="hard">{{ T.mc_mode_hard }}</option><option value="soft">{{ T.mc_mode_soft }}</option></select></div>

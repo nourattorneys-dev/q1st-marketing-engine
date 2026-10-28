@@ -6,11 +6,11 @@
 {# EXT-3 (2026-10-20): outside client sites on the ext_marketing service. Data lives in the service; this page only shows and sends. #}
 <div class="n-content">
   <div class="n-ph"><div><h1>{{ T.mc_title }}</h1><p>{{ T.mc_sub }}</p></div>
-    <div class="n-row" style="gap:8px"><a class="n-btn s" href="/marketing-clients/plans">{{ ic("finance", 16) }}{{ T.nav_mkt_plans }}</a><a class="n-btn s" href="/marketing-clients/settings">{{ ic("settings", 16) }}{{ T.nav_mkt_settings }}</a></div></div>
+    <div class="n-row" style="gap:8px"><a class="n-btn s" href="/marketing-clients/revenue">{{ ic("report", 16) }}{{ T.nav_mkt_revenue }}</a><a class="n-btn s" href="/marketing-clients/plans">{{ ic("finance", 16) }}{{ T.nav_mkt_plans }}</a><a class="n-btn s" href="/marketing-clients/settings">{{ ic("settings", 16) }}{{ T.nav_mkt_settings }}</a></div></div>
   {% if down %}<div class="n-card"><div class="n-empty"><p>{{ T.mc_err_down }}</p></div></div>{% endif %}
   <div class="n-card">
     {% if rows %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_name }}</th><th>{{ T.mc_plan }}</th><th>{{ T.mc_price }}</th><th>{{ T.mc_sites }}</th><th>{{ T.mc_status }}</th><th>{{ T.mc_created }}</th><th></th></tr></thead>
-      {% for a in rows %}<tr><td><a href="/marketing-clients/{{ a.id }}">{{ a.name }}</a></td><td>{{ a.planName or T.mc_no_plan }}</td>
+      {% for a in rows %}<tr><td><a href="/marketing-clients/{{ a.id }}">{{ a.name }}</a>{% if a.openRequests %} {{ badge(T.mc_requests_open | replace("{n}", a.openRequests | string), "warn", True, T.mc_requests_h) }}{% endif %}</td><td>{{ a.planName or T.mc_no_plan }}</td>
         <td class="num">{% if a.price is not none %}{{ a.price }} {{ a.currency or '' }}{% else %}—{% endif %}</td><td class="num">{{ a.siteCount }}</td>
         <td>{{ badge(T['mc_st_' ~ a.status], 'ok' if a.status == 'active' else ('warn' if a.status == 'suspended' else 'n')) }}</td>
         <td class="mut num">{{ when(a.createdAt) }}</td><td><a class="n-btn s" href="/marketing-clients/{{ a.id }}">{{ T.mc_open }}</a></td></tr>{% endfor %}

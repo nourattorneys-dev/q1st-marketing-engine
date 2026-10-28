@@ -38,7 +38,7 @@ async def _api(user, method, path, json=None):
     return (_dates(d.get("data")), None) if d.get("ok") else (None, d.get("error") or {"code": "error", "message": "HTTP %s" % r.status_code})
 
 
-_DATES = {"createdAt", "updatedAt", "lastUsedAt", "revokedAt", "at", "start", "end"}
+_DATES = {"createdAt", "updatedAt", "lastUsedAt", "revokedAt", "at", "start", "end", "handledAt"}
 
 
 def _dates(o):
@@ -115,8 +115,9 @@ async def new_client(request: Request):
 
 # ------------------------------------------------------------------------------ plans
 async def _metrics(user):
-    m, _ = await _api(user, "GET", "/api/v1/meta")
-    return (m or {}).get("metrics") or []
+    """[{key, label, unit}] from the admin API (the site API's /meta lists names only)."""
+    m, _ = await _api(user, "GET", "/admin/v1/metrics")
+    return m or []
 
 
 def _quotas_from_form(f, metrics):
@@ -164,6 +165,21 @@ async def update_plan(pid: str, request: Request):
     return _back(BASE + "/plans", T, err)
 
 
+# ------------------------------------------------------------------------------ usage & revenue
+@router.get("/revenue", response_class=HTMLResponse)
+async def revenue(request: Request, month: str = ""):
+    user, deny = _gate(request)
+    if deny:
+        return deny
+    import re as _re
+    q = f"?month={month}" if _re.fullmatch(r"\d{4}-\d{2}", month or "") else ""
+    d, err = await _api(user, "GET", "/admin/v1/revenue" + q)
+    ups, _ = await _api(user, "GET", "/admin/v1/upgrade-requests?status=open")
+    labels = {m["key"]: m["label"] for m in await _metrics(user)}
+    return templates.TemplateResponse(request, "mktc_revenue.html", {"user": user, "d": d or {}, "ups": ups or [], "labels": labels,
+                                                                     "down": bool(err) and (err or {}).get("code") == "down", "err": err})
+
+
 # ------------------------------------------------------------------------------ settings
 @router.get("/settings", response_class=HTMLResponse)
 async def settings(request: Request):
@@ -196,7 +212,8 @@ async def _detail(request, user, aid, new_key=None):
     plans, _ = await _api(user, "GET", "/admin/v1/plans")
     meta, _ = await _api(user, "GET", "/api/v1/meta")
     return templates.TemplateResponse(request, "mktc_detail.html", {
-        "user": user, "d": d or {}, "plans": plans or [], "meta": meta or {}, "new_key": new_key, "down": bool(err)})
+        "user": user, "d": d or {}, "plans": plans or [], "meta": meta or {}, "metrics": await _metrics(user), "new_key": new_key,
+        "down": bool(err)})
 
 
 @router.get("/{aid}", response_class=HTMLResponse)
@@ -301,3 +318,15 @@ async def remove_override(aid: str, oid: int, request: Request):
     T = _T(request, user)
     _, err = await _api(user, "DELETE", f"/admin/v1/accounts/{aid}/quota-overrides/{oid}")
     return _back(f"{BASE}/{aid}", T, err, "mc_override_removed")
+
+
+@router.post("/{aid}/requests/{uid}")
+async def handle_request(aid: str, uid: str, request: Request):
+    """An upgrade request from the client's app: mark it done (after changing the plan or a limit) or declined."""
+    user, deny = _gate(request)
+    if deny:
+        return deny
+    f = await _form(request); T = _T(request, user)
+    _, err = await _api(user, "POST", f"/admin/v1/upgrade-requests/{uid}", {"status": f.get("status")})
+    nxt = f.get("next") or ""
+    return _back(nxt if nxt.startswith(BASE + "/") and "//" not in nxt else f"{BASE}/{aid}", T, err, "mc_request_saved")   # only back into this section

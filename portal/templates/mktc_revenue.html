@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_icons.html" import ic %}
+{% from "_bits.html" import badge, hint, when with context %}
+{% block title %}{{ T.mc_rev_title }}{% endblock %}
+{% block content %}
+{# Usage & revenue: one billing month, every client. Data from the engine's /admin/v1/revenue; this page only shows it. #}
+<div class="n-content">
+  <div class="n-ph"><div><h1>{{ T.mc_rev_title }}</h1><p>{{ T.mc_rev_sub }}</p></div>
+    <div class="n-row" style="gap:8px;align-items:flex-end">
+      <form method="get" action="/marketing-clients/revenue" class="n-row" style="gap:8px;align-items:flex-end">
+        <div class="n-field"><label for="rv-m">{{ T.mc_rev_month }}</label><input class="n-in" type="month" id="rv-m" name="month" value="{{ d.month or '' }}" style="width:160px"></div>
+        <button class="n-btn s">{{ T.mc_rev_show }}</button></form>
+      <a class="n-btn s" href="/marketing-clients/">{{ T.mc_back }}</a></div></div>
+  {% if down %}<div class="n-card"><div class="n-empty"><p>{{ T.mc_err_down }}</p></div></div>{% elif err %}<div class="n-card"><div class="n-empty"><p>{{ err.message }}</p></div></div>{% else %}
+
+  {% set tot = d.totals or {} %}
+  <div class="n-row" style="gap:12px;flex-wrap:wrap">
+    {% for k, label in (('price', T.mc_rev_income), ('aiCost', T.mc_rev_cost), ('margin', T.mc_rev_margin)) %}
+    <div class="n-card" style="flex:1;min-width:200px;margin:0"><div class="n-bd"><div class="n-mut n-sm">{{ label }}</div>
+      <div style="font-size:26px;font-weight:600;margin-top:4px" class="num">{{ '{:,.2f}'.format(tot[k] or 0) }} <span class="n-mut" style="font-size:14px">{{ d.currency or '' }}</span></div></div></div>{% endfor %}
+  </div>
+  {% if not d.costRateSet %}<div class="n-card"><div class="n-bd n-row" style="gap:8px;align-items:center">{{ ic("warn", 16) }}<span>{{ T.mc_rev_no_rate }}</span> <a href="/marketing-clients/settings">{{ T.nav_mkt_settings }}</a></div></div>{% endif %}
+
+  {% if ups %}<div class="n-card"><div class="n-hd n-hd-2">{{ ic("finance") }}<div><h2>{{ T.mc_requests }}{{ hint(T.mc_requests_h) }}</h2></div>{{ badge(T.mc_requests_open | replace("{n}", ups | length | string), "warn") }}</div>
+    <div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_name }}</th><th>{{ T.mc_metric }}</th><th>{{ T.mc_req_note }}</th><th>{{ T.mc_created }}</th><th></th></tr></thead>
+      {% for u in ups %}<tr><td><a href="/marketing-clients/{{ u.accountId }}">{{ u.accountName }}</a>{% if u.siteName %}<div class="n-mut n-sm">{{ u.siteName }} · {{ u.by or '' }}</div>{% endif %}</td>
+        <td>{{ labels.get(u.metric, u.metric) if u.metric else T.mc_req_any }}</td><td>{{ u.note or '' }}</td><td class="mut num">{{ when(u.at) }}</td>
+        <td><div class="n-row" style="gap:6px">{% for st in ('done', 'declined') %}<form method="post" action="/marketing-clients/{{ u.accountId }}/requests/{{ u.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ st }}"><input type="hidden" name="next" value="/marketing-clients/revenue"><button class="n-btn s{{ ' p' if st == 'done' else '' }}">{{ T['mc_req_mark_' ~ st] }}</button></form>{% endfor %}</div></td></tr>{% endfor %}
+    </table></div></div>{% endif %}
+
+  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("report") }}<div><h2>{{ T.mc_rev_clients }}{{ hint(T.mc_rev_clients_h) }}</h2></div></div>
+    {% if d.clients %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_name }}</th><th>{{ T.mc_plan }}</th><th>{{ T.mc_rev_income }}</th><th>{{ T.mc_rev_cost }}</th><th>{{ T.mc_rev_margin }}</th><th>{{ T.mc_rev_over }}</th><th style="width:34%">{{ T.mc_rev_use }}</th></tr></thead>
+      {% for c in d.clients %}<tr><td><a href="/marketing-clients/{{ c.accountId }}">{{ c.name }}</a>{% if c.status != 'active' %} {{ badge(T['mc_st_' ~ c.status], 'warn', True) }}{% endif %}</td>
+        <td>{{ c.plan or T.mc_no_plan }}</td>
+        <td class="num">{{ '{:,.2f}'.format(c.price) if c.price is not none else '—' }}</td><td class="num">{{ '{:,.2f}'.format(c.aiCost) }}</td>
+        <td class="num"{% if c.margin is not none and c.margin < 0 %} style="color:var(--danger)"{% endif %}>{{ '{:,.2f}'.format(c.margin) if c.margin is not none else '—' }}</td>
+        <td class="num">{% if c.overage %}{{ badge(c.overage | string, 'warn', True, T.mc_rev_over_h) }}{% else %}0{% endif %}</td>
+        <td>{% for u in c.usage if u.metric != 'aiTokens' %}{% set pct = ((u.used / u.limit * 100) if u.limit else 0) %}
+          <div class="n-row" style="gap:8px;align-items:center;margin:2px 0"><span class="n-sm" style="min-width:120px">{{ labels.get(u.metric, u.metric) }}</span>
+            <span class="n-sm num" style="min-width:70px">{{ u.used }}{% if u.limit is not none %} / {{ u.limit }}{% endif %}</span>
+            {% if u.limit %}<div style="flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden"><div style="height:100%;width:{{ [pct, 100] | min }}%;background:var({{ '--danger' if pct >= 100 else '--ok' }});transition:width .3s ease"></div></div>{% endif %}</div>
+          {% else %}<span class="n-mut n-sm">{{ T.mc_rev_nothing }}</span>{% endfor %}</td></tr>{% endfor %}
+    </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_none }}</div>{% endif %}</div>
+  {% endif %}
+</div>
+{% endblock %}

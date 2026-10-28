@@ -105,15 +105,95 @@ async def update_plan(pid: str, req: Request):
 
 
 # ---------------------------------------------------------------- accounts
+@r.get("/metrics")
+async def metrics(req: Request):
+    """What can be metered, with labels and units (the site API's /meta lists only the names)."""
+    admin(req)
+    return ok([dict(x) for x in await db.pool().fetch(f"SELECT key, label, unit FROM {S}.metrics WHERE active ORDER BY key")])
+
+
+# ---------------------------------------------------------------- upgrade requests (sent from the clients' apps)
+@r.get("/upgrade-requests")
+async def upgrade_requests(req: Request, status: str = "open"):
+    admin(req)
+    rows = await db.pool().fetch(
+        f"""SELECT u.*, a.name AS account_name, s.name AS site_name FROM {S}.upgrade_requests u
+            JOIN {S}.accounts a ON a.id = u.account_id LEFT JOIN {S}.sites s ON s.id = u.site_id
+            WHERE ($1 = '' OR u.status = ANY(string_to_array($1, ','))) ORDER BY u.created_at DESC""", status)
+    return ok([{"id": x["id"], "accountId": x["account_id"], "accountName": x["account_name"], "siteId": x["site_id"], "siteName": x["site_name"],
+                "metric": x["metric"], "note": x["note"], "by": x["requested_by"], "status": x["status"], "handledBy": x["handled_by"],
+                "handledAt": x["handled_at"], "at": x["created_at"]} for x in rows])
+
+
+@r.post("/upgrade-requests/{uid}")
+async def handle_upgrade_request(uid: str, req: Request):
+    """Mark a request done or declined (the change itself is made on the client's plan or limits)."""
+    admin(req)
+    d = await body(req)
+    if d.get("status") not in ("done", "declined", "open"):
+        raise validate.bad({"status": "done, declined or open"})
+    row = await db.pool().fetchrow(
+        f"""UPDATE {S}.upgrade_requests SET status = $2, handled_by = CASE WHEN $2 = 'open' THEN NULL ELSE $3 END,
+               handled_at = CASE WHEN $2 = 'open' THEN NULL ELSE now() END WHERE id = $1 RETURNING *""", uid, d["status"], ACTOR_OF(req))
+    if not row:
+        raise ApiError(404, "not_found", "Request not found.")
+    await audit(ACTOR_OF(req), "upgrade_request." + d["status"], account_id=row["account_id"], site_id=row["site_id"], target=uid)
+    return ok({"id": uid, "status": row["status"]})
+
+
+# ---------------------------------------------------------------- usage & revenue (one month, every client)
+@r.get("/revenue")
+async def revenue(req: Request, month: str = ""):
+    """Per client for one billing month: the price it pays, usage against each limit, overage, and the estimated AI cost."""
+    admin(req)
+    import re
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    s = await db.settings(["billing_timezone", "currency", "cost_per_1k_tokens"])
+    tz = s.get("billing_timezone") or "UTC"
+    month = month or f"{datetime.now(ZoneInfo(tz)):%Y-%m}"
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise validate.bad({"month": "A month like 2026-10"})
+    p = db.pool()
+    accs = await p.fetch(
+        f"""SELECT a.id, a.name, a.status, p.name AS plan_name, coalesce(a.price_override, p.price) AS price, coalesce(p.currency, $1) AS currency,
+                   p.billing_period FROM {S}.accounts a LEFT JOIN {S}.plans p ON p.id = a.plan_id WHERE a.status <> 'closed' ORDER BY a.name""", s.get("currency"))
+    use = await p.fetch(
+        f"""SELECT account_id, metric, sum(CASE WHEN metric = 'aiTokens' THEN tokens_in + tokens_out ELSE qty END) AS used,
+                   sum(CASE WHEN over_quota THEN qty ELSE 0 END) AS over, sum(coalesce(cost_estimate, 0)) AS cost
+            FROM {S}.usage_events WHERE to_char(at AT TIME ZONE $1, 'YYYY-MM') = $2 GROUP BY 1, 2""", tz, month)
+    by: dict = {}
+    for u in use:
+        by.setdefault(u["account_id"], {})[u["metric"]] = u
+    cur = month == f"{datetime.now(ZoneInfo(tz)):%Y-%m}"
+    out, totals = [], {"price": 0.0, "cost": 0.0}
+    for a in accs:
+        m = by.get(a["id"], {})
+        lim = {q["metric"]: q for q in (await quotas.effective(a["id"]))["quotas"]} if cur else {}
+        rows = [{"metric": k, "used": int(v["used"] or 0), "over": int(v["over"] or 0),
+                 "limit": (lim.get(k) or {}).get("limit"), "mode": (lim.get(k) or {}).get("mode")} for k, v in sorted(m.items())]
+        cost = float(sum(float(v["cost"] or 0) for v in m.values()))
+        price = (float(a["price"]) / (12 if a["billing_period"] == "year" else 1)) if a["price"] is not None else None   # this month's share
+        totals["price"] += price or 0
+        totals["cost"] += cost
+        out.append({"accountId": a["id"], "name": a["name"], "status": a["status"], "plan": a["plan_name"], "price": price,
+                    "currency": a["currency"], "usage": rows, "overage": sum(r["over"] for r in rows), "aiCost": round(cost, 2),
+                    "margin": round(price - cost, 2) if price is not None else None})
+    return ok({"month": month, "currency": s.get("currency"), "costRateSet": s.get("cost_per_1k_tokens") is not None,
+               "clients": out, "totals": {"price": round(totals["price"], 2), "aiCost": round(totals["cost"], 2),
+                                          "margin": round(totals["price"] - totals["cost"], 2)}})
+
+
 @r.get("/accounts")
 async def accounts(req: Request):
     admin(req)
     rows = await db.pool().fetch(
         f"""SELECT a.*, p.name AS plan_name, coalesce(a.price_override, p.price) AS price, p.currency,
-                   (SELECT count(*) FROM {S}.sites s WHERE s.account_id = a.id AND s.deleted_at IS NULL) AS site_count
+                   (SELECT count(*) FROM {S}.sites s WHERE s.account_id = a.id AND s.deleted_at IS NULL) AS site_count,
+                   (SELECT count(*) FROM {S}.upgrade_requests u WHERE u.account_id = a.id AND u.status = 'open') AS open_requests
             FROM {S}.accounts a LEFT JOIN {S}.plans p ON p.id = a.plan_id ORDER BY a.created_at DESC""")
     return ok([{**shapes.account(dict(x)), "planName": x["plan_name"], "price": x["price"], "currency": x["currency"],
-                "siteCount": x["site_count"]} for x in rows])
+                "siteCount": x["site_count"], "openRequests": x["open_requests"]} for x in rows])
 
 
 @r.get("/accounts/{aid}")
