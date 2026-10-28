@@ -86,7 +86,7 @@ async def add_keywords(site_id: str, req: Request):
         raise validate.bad({"language": "Must be one of the site's languages"})
     added, skipped = await keywords.add(site_id, ph, lg, "person", c.name)
     await audit(c.name, "keywords.add", account_id=c.account_id, site_id=site_id, detail={"added": len(added)})
-    return ok({"added": added, "skipped": skipped})
+    return ok(added, {"skipped": skipped})                              # spec v1.1: Keyword[]; duplicates listed in meta
 
 
 @r.post("/sites/{site_id}/keywords/bulk")
