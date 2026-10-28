@@ -6,7 +6,7 @@ import asyncio, logging, re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import db, jobs, media, meter, mirror, security, website
+from . import db, jobs, media, meter, mirror, quotas, security, website
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.publishing")
@@ -267,7 +267,7 @@ async def tick() -> int:
         if any(p["status"] == "publishing" for p in st["queue"]):
             continue                                                    # one at a time per site
         rows, why, _ = plan(site, st)
-        if why is not None:
+        if why is not None or await quotas.blocked(site["account_id"], sid, {"publishes": 1}):
             continue
         first = next((r["post"] for r in rows if r["waiting"] is None and r["post"]["status"] == "approved"), None)
         if first and await claim(sid, first["id"]):

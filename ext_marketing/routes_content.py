@@ -2,7 +2,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, Request
 
-from . import db, jobs, keywords, profile, validate
+from . import quotas, db, jobs, keywords, profile, validate
 from .auth import ApiError, audit, caller, site_of
 from .routes_client import body, ok
 
@@ -115,6 +115,7 @@ async def propose_keywords(site_id: str, req: Request):
     lg = d.get("language")
     if lg and lg not in site["languages"]:
         raise validate.bad({"language": "Must be one of the site's languages"})
+    await quotas.check(c.account_id, site_id, {"keywordProposals": 1, "aiTokens": 0})
     jid = await jobs.enqueue(c.account_id, site_id, "keywords.propose", {"language": lg, "by": c.name})
     await audit(c.name, "keywords.propose", account_id=c.account_id, site_id=site_id, target=jid)
     return ok({"jobId": jid, "status": "queued"})

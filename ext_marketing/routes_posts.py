@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from . import db, jobs, locks, media, meter, posts, rules as R, validate
+from . import db, jobs, locks, media, meter, posts, quotas, rules as R, validate
 from .auth import ApiError, audit, caller, site_of
 from .routes_client import body, ok
 
@@ -90,6 +90,7 @@ async def topics(site_id: str, req: Request):
         d = await body(req)
     except ApiError:
         d = {}
+    await quotas.check(c.account_id, site_id, {"topicRuns": 1, "aiTokens": 0})
     jid = await jobs.enqueue(c.account_id, site_id, "topics.suggest", {"keywordIds": [x for x in (d.get("ids") or []) if isinstance(x, str)]})
     return ok({"jobId": jid, "status": "queued"})
 
@@ -324,6 +325,7 @@ async def _photo_ok(c, site_id: str, pid: str) -> dict:
 @r.post("/sites/{site_id}/posts/{pid}/image/pick")
 async def pick(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
+    await quotas.check(c.account_id, site_id, {"photos": 1})
     p = await _photo_ok(c, site_id, pid)
     d = await body(req)
     if not d.get("full"):
@@ -341,6 +343,7 @@ async def pick(site_id: str, pid: str, req: Request):
 @r.post("/sites/{site_id}/posts/{pid}/image")
 async def upload(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
+    await quotas.check(c.account_id, site_id, {"photos": 1})
     p = await _photo_ok(c, site_id, pid)
     form = await req.form()
     f = form.get("file")

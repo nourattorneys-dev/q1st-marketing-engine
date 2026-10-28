@@ -2,7 +2,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, Request
 
-from . import db, jobs, locks, posts, publishing as PB, validate
+from . import db, jobs, locks, posts, publishing as PB, quotas, validate
 from .auth import ApiError, audit, caller, site_of
 from .routes_client import body, ok
 from .routes_posts import _post, delete_post
@@ -107,6 +107,7 @@ async def changes(site_id: str, pid: str, req: Request):
     note = " ".join(str((await _opt(req)).get("note") or "").split())
     if not note:
         raise validate.bad({"note": "Say what should change"})
+    await quotas.check(c.account_id, site_id, {"aiTokens": 0})          # a new draft is AI work
     row = await db.pool().fetchrow(
         f"""UPDATE {S}.posts SET status = 'drafting', review_note = $3, approved_at = NULL, hold = false, reviewed_by = $4, error = NULL,
                version = version + 1, updated_at = now()
@@ -169,6 +170,7 @@ async def _publish(c, site_id: str, pid: str, section) -> dict:
         if not isinstance(section, str):
             raise validate.bad({"section": "A website category slug"})
         await db.pool().execute(f"UPDATE {S}.posts SET section = $2 WHERE id = $1 AND status IN ('approved','failed')", pid, section or None)
+    await quotas.check(c.account_id, site_id, {"publishes": 1})
     q = await PB.claim(site_id, pid)
     if not q:
         raise ApiError(409, "wrong_status", f"Only an approved post, or one whose publishing failed, can be published (this one is {p['status']}).")

@@ -3,7 +3,7 @@ topic suggestions, and the exact JSON shape the site's app receives."""
 from __future__ import annotations
 import logging
 
-from . import db, jobs, llm, locks, media, meter, mirror, profile, rules as R, security, website, writer
+from . import db, jobs, llm, locks, media, meter, mirror, profile, quotas, rules as R, security, website, writer
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.posts")
@@ -58,6 +58,7 @@ async def create(site: dict, *, topic: str, kind: str, platform: str, language: 
                  by: str, suggestion_id: str | None = None) -> tuple[list, list]:
     """One drafting post per language (language 'both' = every site language), linked by pair_id; one job each."""
     langs = list(site["languages"]) if language == "both" else [language]
+    await quotas.check(site["account_id"], site["id"], {"articles" if kind == "blog" else "socialPosts": len(langs), "aiTokens": 0})
     pair = security.new_id("pair") if len(langs) > 1 else None
     src = await source_language(site) if pair and kind == "blog" else None
     if src not in langs:
@@ -131,7 +132,7 @@ async def refresh_twins(source_id: str) -> None:
 
 async def _auto_photo(site: dict, p: dict, idea: str, alt: str) -> dict | None:
     s = await db.settings(["photo_auto", "photo_candidates", "photo_orientation"])
-    if not s.get("photo_auto"):
+    if not s.get("photo_auto") or await quotas.blocked(site["account_id"], site["id"], {"photos": 1}):
         return None
     orient = (s.get("photo_orientation") or {}).get(p["platform"], "landscape")
     for ph in await media.search(idea, orient, int(s.get("photo_candidates") or 3)):

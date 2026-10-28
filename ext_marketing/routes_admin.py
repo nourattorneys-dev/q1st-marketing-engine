@@ -129,11 +129,14 @@ async def account_detail(aid: str, req: Request):
         f"SELECT * FROM {S}.sites WHERE account_id = $1 AND deleted_at IS NULL ORDER BY created_at", aid)]
     ovr = await p.fetch(f"SELECT * FROM {S}.quota_overrides WHERE account_id = $1 ORDER BY metric, site_id NULLS FIRST", aid)
     keys = await p.fetch(f"SELECT * FROM {S}.api_keys WHERE account_id = $1 ORDER BY created_at DESC", aid)
+    ups = await p.fetch(f"SELECT * FROM {S}.upgrade_requests WHERE account_id = $1 ORDER BY created_at DESC", aid)
     return ok({"account": shapes.account(dict(a)), "plan": plan,
                "price": a["price_override"] if a["price_override"] is not None else (plan or {}).get("price"),
                "usage": await quotas.effective(aid), "sites": sites,
                "overrides": [{"id": x["id"], "metric": x["metric"], "siteId": x["site_id"], "limit": x["limit_value"], "mode": x["mode"],
                               "warnAt": x["warn_at"], "reason": x["reason"], "setBy": x["set_by"], "at": x["created_at"]} for x in ovr],
+               "upgradeRequests": [{"id": x["id"], "siteId": x["site_id"], "metric": x["metric"], "note": x["note"], "by": x["requested_by"],
+                                    "status": x["status"], "at": x["created_at"]} for x in ups],
                "keys": [{"id": x["id"], "siteId": x["site_id"], "prefix": x["key_prefix"], "label": x["label"], "createdAt": x["created_at"],
                          "lastUsedAt": x["last_used_at"], "revokedAt": x["revoked_at"]} for x in keys]})
 
