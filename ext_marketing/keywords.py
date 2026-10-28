@@ -9,10 +9,18 @@ S = db.SCHEMA
 log = logging.getLogger("ext_marketing.keywords")
 
 
+def _person(who: str | None) -> dict | None:
+    """Who added it, as {id, name} (spec v1.1): the person the site's app named (X-Acting-User), else the key's label."""
+    if not who:
+        return None
+    name = who.split(" via ")[0].removeprefix("key:")
+    return {"id": name, "name": name}
+
+
 def shape(r: dict) -> dict:
     return {"id": r["id"], "phrase": r["phrase"], "language": r["language"], "source": r["source"], "status": r["status"],
             "rationale": r["rationale"], "uses": r["uses"], "searchVolume": r.get("search_volume"), "difficulty": r.get("difficulty"),
-            "addedBy": r["added_by"], "createdAt": r["created_at"], "updatedAt": r["updated_at"]}
+            "addedBy": _person(r["added_by"]), "createdAt": r["created_at"], "updatedAt": r["updated_at"]}
 
 
 async def add(site_id: str, phrases: list, language: str, source: str, by: str | None, rationale: str | None = None,
