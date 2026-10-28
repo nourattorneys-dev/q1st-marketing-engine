@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Q1st Connector
- * Description: Lets the Quantum1st marketing engine publish approved articles to this site: signs it in on hosts that drop the login header, writes the SEO title and description, and reports what the site has.
- * Version: 0.2.0
+ * Description: Lets the Quantum1st marketing engine publish approved articles to this site: signs it in on hosts that drop the login header, writes the SEO title and description, stores an article's translation in TranslatePress, and reports what the site has.
+ * Version: 0.3.0
  * Requires at least: 5.6
  * Requires PHP: 7.4
  * Author: Quantum1st
@@ -11,7 +11,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('Q1ST_CONNECTOR_VERSION', '0.2.0');
+define('Q1ST_CONNECTOR_VERSION', '0.3.0');
 
 /*
  * Sign-in. Many hosts remove the standard Authorization header before WordPress sees it, so the engine also sends the
@@ -56,7 +56,108 @@ add_action('rest_api_init', function () {
         'permission_callback' => function ($r) { return current_user_can('edit_post', (int) $r['id']); },
         'callback' => 'q1st_rendered',
     ));
+    register_rest_route('q1st/v1', '/translate/(?P<id>\\d+)', array(
+        'methods' => 'POST',
+        'permission_callback' => function ($r) { return current_user_can('edit_post', (int) $r['id']); },
+        'callback' => 'q1st_translate',
+    ));
 });
+
+/* TranslatePress keeps each text piece of a page as it appears in the page's HTML (WordPress's typographic characters as
+   codes, e.g. &#8217;), trimmed its own way. These are the pieces of one rendered piece of HTML, in that form. */
+function q1st_raw_pieces($html, $trp_render) {
+    $html = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', '', (string) $html);
+    $out = array();
+    foreach (preg_split('/<[^>]*>/', $html) as $s) {
+        $s = $trp_render ? $trp_render->full_trim($s) : trim($s);
+        if ($s !== '') { $out[] = $s; }
+    }
+    return $out;
+}
+
+/* For comparing our text with the rendered text: entities decoded, typographic quotes and dashes plain, spaces collapsed. */
+function q1st_norm($s) {
+    $s = html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $s = strtr($s, array("\xe2\x80\x98" => "'", "\xe2\x80\x99" => "'", "\xe2\x80\x9c" => '"', "\xe2\x80\x9d" => '"', "\xe2\x80\x93" => '-', "\xe2\x80\x94" => '-', "\xe2\x80\xa6" => '...', "\xc2\xa0" => ' '));
+    $s = preg_replace('/-{2,}/', '-', $s);                           // WordPress writes -- as a dash
+    return strtolower(trim(preg_replace('/\s+/u', ' ', $s)));
+}
+
+/*
+ * Stores the translation of one published post in TranslatePress, through TranslatePress's own functions.
+ * Body: {language, pieces: [{source, translated}], extra: [{source, translated}]}. "pieces" are the article's text pieces in
+ * reading order (our source text and its translation); each is matched, in order, to the piece of the rendered page with the
+ * same text, so text other plugins add to the page is skipped. "extra" are single strings (title, SEO title, description).
+ * Every pair is written as reviewed by a person; the answer says how many matched and lists any that did not.
+ */
+function q1st_translate($r) {
+    if (!class_exists('TRP_Translate_Press')) {
+        return new WP_Error('no_translatepress', 'TranslatePress is not active on this site.', array('status' => 409));
+    }
+    $p = get_post((int) $r['id']);
+    if (!$p) { return new WP_Error('not_found', 'No such post', array('status' => 404)); }
+    $b = $r->get_json_params();
+    $lang = isset($b['language']) ? (string) $b['language'] : '';
+    $trp = TRP_Translate_Press::get_trp_instance();
+    $settings = get_option('trp_settings', array());
+    $code = null;
+    foreach ((array) $settings['translation-languages'] as $l) {
+        if ($l === $lang || strtolower(substr($l, 0, 2)) === strtolower(substr($lang, 0, 2))) { $code = $l; }
+    }
+    if (!$code || $code === $settings['default-language']) {
+        return new WP_Error('no_language', 'This site does not translate into ' . $lang . '.', array('status' => 409));
+    }
+    $q = $trp->get_component('query');
+    $render = $trp->get_component('translation_render');
+
+    $GLOBALS['post'] = $p;
+    setup_postdata($p);
+    $rendered = q1st_raw_pieces(apply_filters('the_content', $p->post_content), $render);
+    $title = $render->full_trim(get_the_title($p));
+    wp_reset_postdata();
+
+    $pairs = array(); $missed = array(); $j = 0;
+    $norm_rendered = array_map('q1st_norm', $rendered);
+    foreach ((array) $b['pieces'] as $i => $pc) {
+        $want = q1st_norm(isset($pc['source']) ? $pc['source'] : '');
+        $found = -1;
+        for ($k = $j; $k < count($rendered); $k++) {
+            if ($norm_rendered[$k] === $want) { $found = $k; break; }
+        }
+        if ($found < 0) { $missed[] = $i; continue; }
+        $pairs[$rendered[$found]] = (string) $pc['translated'];
+        $j = $found + 1;
+    }
+    foreach ((array) (isset($b['extra']) ? $b['extra'] : array()) as $pc) {
+        $src = (string) $pc['source'];
+        foreach (array_unique(array($src, wptexturize(esc_html($src)), esc_attr($src), $title)) as $form) {
+            if ($form !== '' && q1st_norm($form) === q1st_norm($src)) { $pairs[$render->full_trim($form)] = (string) $pc['translated']; }
+        }
+    }
+    if (!$pairs) {
+        return new WP_Error('nothing_matched', 'None of the article\'s text was found on the published page.', array('status' => 409, 'rendered' => count($rendered)));
+    }
+    $originals = array_keys($pairs);
+    $render->process_strings($originals, $code, 0, true);             // TranslatePress adds any piece it does not know yet, as it does for a visitor
+    $rows = $q->get_existing_translations($originals, $code, 0);
+    $update = array();
+    foreach ($originals as $o) {
+        if (!isset($rows[$o])) { continue; }
+        $row = (array) $rows[$o];
+        $row['translated'] = $pairs[$o];
+        $row['status'] = 2;                                             // reviewed by a person
+        $update[] = $row;
+    }
+    if ($update) { $q->update_strings($update, $code, array('id', 'translated', 'status')); }
+    $check = $q->get_existing_translations($originals, $code, 0);
+    $stored = 0;
+    foreach ($originals as $o) {
+        if (isset($check[$o]) && (int) $check[$o]->status === 2 && $check[$o]->translated === $pairs[$o]) { $stored++; }
+    }
+    return array('language' => $code, 'sent' => count((array) $b['pieces']), 'matched' => count($pairs), 'stored' => $stored,
+                 'missed' => $missed, 'renderedPieces' => count($rendered),
+                 'url' => trailingslashit(home_url()) . (isset($settings['url-slugs'][$code]) ? $settings['url-slugs'][$code] : $code) . '/' . $p->post_name . '/');
+}
 
 /* The text pieces a visitor's page shows for one post (title + content after WordPress's own filters), in order. */
 function q1st_pieces($html) {

@@ -225,3 +225,18 @@ async def remove(t: dict, secret: str, external_id: str, image_id: int | None = 
         await c.delete(f"/wp/v2/{base}/{external_id}", params={"force": "true"})
         if image_id:
             await c.delete(f"/wp/v2/media/{image_id}", params={"force": "true"})
+
+
+async def translate(t: dict, secret: str, external_id: str, language: str, pieces: list[dict], extra: list[dict]) -> dict:
+    """Stores a published post's translation in the site's translation plugin (TranslatePress) through our Connector plugin.
+    pieces: [{source, translated}] in reading order; extra: single strings (title, SEO title, description).
+    Returns the plugin's answer {sent, matched, stored, missed, url}."""
+    s = t.get("settings") or {}
+    async with await _client(s, secret) as c:
+        r = await c.post(f"/q1st/v1/translate/{external_id}", json={"language": language, "pieces": pieces, "extra": extra})
+        if r.status_code == 404 and _code(r)[0] == "rest_no_route":
+            raise WPError("The site's Q1st Connector plugin is too old to store translations. Install the latest version.")
+        if r.status_code >= 400:
+            code, msg = _code(r)
+            raise WPError(f"The translation could not be stored: {msg or code or f'HTTP {r.status_code}'}")
+        return r.json()

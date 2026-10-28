@@ -6,7 +6,7 @@ import asyncio, logging, re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import db, jobs, media, meter, security, website
+from . import db, jobs, media, meter, mirror, security, website
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.publishing")
@@ -159,7 +159,7 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
         if not conn or not conn["secret_enc"] or not t.get("type"):
             raise Failed("The website is not connected. Open Settings → Website connection and save a working connection.")
         if p.get("source_id") and (t.get("arabic") or {}).get("mode") == "translatepress":
-            raise Failed("This version is published as the translation of its source page; that step is not switched on for this site yet.")
+            return await _as_translation(p, site, t, security.decrypt(conn["secret_enc"]), auto, job_id)
         img = p.get("image") or None
         image = None
         if img and img.get("key"):
@@ -194,6 +194,36 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
             site["id"], [k.lower() for k in p["keywords"]])
     await db.pool().execute(f"UPDATE {S}.site_connections SET status = 'ok', last_error = NULL, last_checked_at = now() "
                             f"WHERE site_id = $1 AND type = 'website'", site["id"])
+    await meter.record(site["account_id"], site["id"], "publishes", 1, job_id=job_id)
+    return dict(row)
+
+
+async def _as_translation(p: dict, site: dict, t: dict, secret: str, auto: bool, job_id: str | None) -> dict:
+    """A twin on a site whose translations are stored by a translation plugin: its pieces are stored as the translation of the
+    source's published page (same address under the language's path), not as a second post."""
+    src = await db.pool().fetchrow(f"SELECT * FROM {S}.posts WHERE id = $1", p["source_id"])
+    sp = (src["published"] or {}) if src else {}
+    if not src or src["status"] != "published" or sp.get("target") != t["type"] or not sp.get("externalId"):
+        raise Failed("Publish the version this is translated from first; this one is stored as its translation.")
+    a, b = mirror.segments(src["content"] or ""), mirror.segments(p["content"] or "")
+    if mirror.shape(src["content"] or "") != mirror.shape(p["content"] or "") or len(a) != len(b):
+        raise Failed("This version no longer matches the structure of the one it translates. Ask for changes to translate it again.")
+    pieces = [{"source": x, "translated": y} for x, y in zip(a, b)]
+    extra = [{"source": s, "translated": d} for s, d in ((src["title"], p["title"]), (src["meta_title"], p["meta_title"]),
+                                                          (src["meta_description"], p["meta_description"])) if s and d]
+    try:
+        res = await website.ADAPTERS[t["type"]]["translate"](t, secret, sp["externalId"], p["language"], pieces, extra)
+    except website.Refused as e:
+        raise Failed(e.message)
+    if res.get("missed"):
+        raise Failed(f"{len(res['missed'])} of {res.get('sent')} pieces were not found on the published page (it may have been edited "
+                     "on the website). Publish the source again, then retry this.")
+    now = datetime.now(timezone.utc)
+    pub = {"target": "translatepress", "url": res.get("url"), "externalId": sp["externalId"], "at": now.isoformat(),
+           "stored": res.get("stored"), "auto": auto}
+    row = await db.pool().fetchrow(
+        f"""UPDATE {S}.posts SET status = 'published', published = $2, published_at = $3, auto_published = $4, error = NULL,
+               version = version + 1, updated_at = now() WHERE id = $1 RETURNING *""", p["id"], pub, now, auto)
     await meter.record(site["account_id"], site["id"], "publishes", 1, job_id=job_id)
     return dict(row)
 
