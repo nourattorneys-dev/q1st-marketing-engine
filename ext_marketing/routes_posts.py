@@ -296,7 +296,13 @@ async def photo_search(site_id: str, req: Request, q: str = "", orientation: str
     if not q.strip():
         raise validate.bad({"q": "What the photo should show"})
     per = int(n or (await db.settings(["page_size_default"])).get("page_size_default") or 25)
-    return ok(await media.search(q, orientation, max(1, min(per, 80))))
+    found = await media.search(q, orientation, max(1, min(per, 80)))
+    for ph in found:                                                    # remembered so a pick needs only the photo's id (spec v1.1)
+        await db.pool().execute(
+            f"""INSERT INTO {S}.photo_seen (site_id, pexels_id, full_url, photographer, alt) VALUES ($1,$2,$3,$4,$5)
+                ON CONFLICT (site_id, pexels_id) DO UPDATE SET full_url = EXCLUDED.full_url, photographer = EXCLUDED.photographer,
+                  alt = EXCLUDED.alt, seen_at = now()""", site_id, int(ph["pexelsId"]), ph["full"], ph.get("photographer"), ph.get("alt"))
+    return ok(found)
 
 
 async def _set_image(c, site_id: str, p: dict, img: dict | None, action: str) -> dict:
@@ -328,16 +334,21 @@ async def pick(site_id: str, pid: str, req: Request):
     await quotas.check(c.account_id, site_id, {"photos": 1})
     p = await _photo_ok(c, site_id, pid)
     d = await body(req)
-    if not d.get("full"):
-        raise validate.bad({"full": "The photo's 'full' address from the search result"})
+    pxid = d.get("pexelsId")
+    if not isinstance(pxid, int) or isinstance(pxid, bool):
+        raise validate.bad({"pexelsId": "The photo's pexelsId from the search result"})
+    seen = await db.pool().fetchrow(f"SELECT * FROM {S}.photo_seen WHERE site_id = $1 AND pexels_id = $2", site_id, pxid)
+    if not seen:
+        raise validate.bad({"pexelsId": "Search for the photo first, then pick it from the results"})
     try:
-        data, ct = await media.download(d["full"])
+        data, ct = await media.download(seen["full_url"])
     except ValueError as e:
-        raise validate.bad({"full": str(e)})
+        raise validate.bad({"pexelsId": str(e)})
     key = await media.store(site_id, pid, data, ct)
-    img = {"key": key, "ctype": ct, "bytes": len(data), "alt": (d.get("alt") or "")[:300], "credit": (d.get("credit") or (f"Photo by {d['photographer']} on Pexels" if d.get("photographer") else ""))[:255],
-           "source": "pexels", "pexelsId": d.get("pexelsId")}
-    return ok(await _set_image(c, site_id, p, img, "post.photo_pick"))
+    img = {"key": key, "ctype": ct, "bytes": len(data), "alt": (d.get("alt") or seen["alt"] or "")[:300],
+           "credit": (f"Photo by {seen['photographer']} on Pexels" if seen["photographer"] else "Photo from Pexels")[:255],
+           "source": "pexels", "pexelsId": pxid}
+    return ok((await _set_image(c, site_id, p, img, "post.photo_pick"))["image"])
 
 
 @r.post("/sites/{site_id}/posts/{pid}/image")
@@ -357,14 +368,15 @@ async def upload(site_id: str, pid: str, req: Request):
         raise validate.bad({"file": str(e)})
     key = await media.store(site_id, pid, data, ct)
     img = {"key": key, "ctype": ct, "bytes": len(data), "alt": (form.get("alt") or "")[:300], "credit": (form.get("credit") or "")[:255], "source": "upload"}
-    return ok(await _set_image(c, site_id, p, img, "post.photo_upload"))
+    return ok((await _set_image(c, site_id, p, img, "post.photo_upload"))["image"])     # spec v1.1: Post.image
 
 
 @r.delete("/sites/{site_id}/posts/{pid}/image")
 async def remove_image(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
     p = await _photo_ok(c, site_id, pid)
-    return ok(await _set_image(c, site_id, p, None, "post.photo_remove"))
+    await _set_image(c, site_id, p, None, "post.photo_remove")
+    return ok({"removed": True})
 
 
 @r.get("/sites/{site_id}/media/{pid}")

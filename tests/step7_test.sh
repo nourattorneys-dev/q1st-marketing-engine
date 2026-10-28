@@ -36,7 +36,8 @@ check "T4 drafting an article over its limit is refused, nothing created" "$(as 
 check "T4b 'both' languages count as two articles" "$(curl -s -o /dev/null -X PUT $API/admin/v1/accounts/$AID/quota-overrides "${A[@]}" -d '{"metric":"articles","limit":1,"reason":"test"}'; as -X POST $U/drafts -d '{"topic":"t","kind":"blog","language":"both"}' | j "d['error']['details']")" "{'metric': 'articles', 'used': 0, 'limit': 1}"
 $PSQL "insert into ext_marketing.posts (id, site_id, kind, platform, language, status, topic, title, content) values ('p_t7','$SID','blog','website','en','pending','t','Photo test','<p>x</p>')" >/dev/null
 PH=$(G "$U/photos/search?q=dubai%20office" | j "d['data'][0]['pexelsId']")
-check "T5 photos up to the site's limit are allowed" "$(as -X POST $U/posts/p_t7/image/pick -d '{"pexelsId":'$PH'}' | j "d['ok']")|$(as -X POST $U/posts/p_t7/image/pick -d '{"pexelsId":'$PH'}' | j "d['ok']")" "True|True"
+check "T5 photos up to the site's limit are allowed (pick by id, answer is the image)" "$(as -X POST $U/posts/p_t7/image/pick -d '{"pexelsId":'$PH'}' | j "(d['data']['source'], d['data']['pexelsId']==$PH)")|$(as -X POST $U/posts/p_t7/image/pick -d '{"pexelsId":'$PH',"alt":"An office"}' | j "d['data']['alt']")" "('pexels', True)|An office"
+check "T5c a photo that was not in this site's search is refused" "$(as -X POST $U/posts/p_t7/image/pick -d '{"pexelsId":1}' | j "list(d['error']['fields'])")" "['pexelsId']"
 check "T5b the next one is refused (the site's own count)" "$(as -X POST $U/posts/p_t7/image/pick -d '{"pexelsId":'$PH'}' | j "(d['error']['code'], d['error']['details']['used'], d['error']['details']['limit'])")" "('quota_exceeded', 2, 2)"
 
 # ---- soft limits are recorded, not refused
