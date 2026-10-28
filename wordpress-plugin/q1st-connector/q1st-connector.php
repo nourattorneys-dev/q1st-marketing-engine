@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Q1st Connector
  * Description: Lets the Quantum1st marketing engine publish approved articles to this site: signs it in on hosts that drop the login header, writes the SEO title and description, stores an article's translation in TranslatePress, and reports what the site has.
- * Version: 0.3.1
+ * Version: 0.3.2
  * Requires at least: 5.6
  * Requires PHP: 7.4
  * Author: Quantum1st
@@ -11,7 +11,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('Q1ST_CONNECTOR_VERSION', '0.3.1');
+define('Q1ST_CONNECTOR_VERSION', '0.3.2');
 
 /*
  * Sign-in. Many hosts remove the standard Authorization header before WordPress sees it, so the engine also sends the
@@ -147,7 +147,9 @@ function q1st_translate($r) {
         return new WP_Error('nothing_matched', 'None of the article\'s text was found on the published page.', array('status' => 409, 'rendered' => count($rendered)));
     }
     $originals = array_keys($pairs);
-    $render->process_strings($originals, $code, 0, true);             // TranslatePress adds any piece it does not know yet, as it does for a visitor
+    // TranslatePress adds any piece it does not know yet, as it does for a visitor; the 4th argument lists the strings it must
+    // not machine-translate: all of ours (they are translated already)
+    $render->process_strings($originals, $code, 0, $originals);
     $rows = $q->get_existing_translations($originals, $code, 0);
     $update = array();
     foreach ($originals as $o) {
