@@ -6,9 +6,9 @@ S = db.SCHEMA
 
 
 async def connection_types() -> list[str]:
-    """strapi + every social platform the engine can publish to (from settings, not code)."""
+    """the website + every social platform the engine can publish to (from settings, not code)."""
     s = await db.settings(["platforms"])
-    return ["strapi"] + [p for p in (s.get("platforms") or []) if p != "website"]
+    return ["website"] + [p for p in (s.get("platforms") or []) if p != "website"]
 
 
 async def site(row: dict) -> dict:

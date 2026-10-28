@@ -3,7 +3,7 @@ topic suggestions, and the exact JSON shape the site's app receives."""
 from __future__ import annotations
 import logging
 
-from . import db, jobs, llm, media, meter, profile, rules as R, security, writer
+from . import db, jobs, llm, locks, media, meter, profile, rules as R, security, writer
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.posts")
@@ -39,7 +39,7 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
            "sources": p["sources"], "findings": p["findings"], "seo": p["seo"], "reviewNote": p["review_note"], "error": p["error"],
            "schedule": {"hold": p["hold"]} if p["status"] == "approved" else None, "published": p["published"],
            "requestedBy": p["requested_by"], "reviewedBy": p["reviewed_by"], "createdAt": p["created_at"], "updatedAt": p["updated_at"],
-           "version": p["version"], "actions": actions(p, ed)}
+           "lock": locks.shape(p), "version": p["version"], "actions": actions(p, ed)}
     if not full:
         out.pop("content", None)
     else:

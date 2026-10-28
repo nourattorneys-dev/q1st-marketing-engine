@@ -84,6 +84,8 @@ async def loop() -> None:
         try:
             s = await db.settings(["queue_max_concurrent", "queue_poll_seconds"])
             await _recover()
+            from . import idempotency
+            await idempotency.purge()
             while len(_running) < int(s.get("queue_max_concurrent") or 1):
                 job = await _claim()
                 if not job:

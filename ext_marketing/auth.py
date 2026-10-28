@@ -19,6 +19,7 @@ class Caller:
     account_id: str
     site_id: str             # the one site this key may use
     name: str                # for the audit log: key label, or the acting person the site app passes
+    user: str = ""           # the acting person alone (X-Acting-User); who holds an editing lock
 
 
 async def caller(request: Request) -> Caller:
@@ -35,7 +36,7 @@ async def caller(request: Request) -> Caller:
     if not row:
         raise ApiError(401, "unauthorized", "API key not valid, revoked, or its account is suspended.")
     who = (h.get("x-acting-user") or "").strip()[:120]
-    return Caller(row["account_id"], row["site_id"], f"{who} via {row['label']}" if who else f"key:{row['label']}")
+    return Caller(row["account_id"], row["site_id"], f"{who} via {row['label']}" if who else f"key:{row['label']}", who or f"key:{row['label']}")
 
 
 async def site_of(c: Caller, site_id: str) -> dict:

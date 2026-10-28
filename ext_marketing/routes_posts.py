@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from . import db, jobs, media, meter, posts, rules as R, validate
+from . import db, jobs, locks, media, meter, posts, rules as R, validate
 from .auth import ApiError, audit, caller, site_of
 from .routes_client import body, ok
 
@@ -210,6 +210,7 @@ async def get_post(site_id: str, pid: str, req: Request):
 async def edit_post(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
     p = await _post(site_id, pid)
+    locks.guard(c, p)
     ed = (await db.settings(["editable_statuses"])).get("editable_statuses") or ["pending"]
     if p["status"] not in ed:
         raise ApiError(409, "not_editable", f"A post that is {p['status']} cannot be edited.")
@@ -246,6 +247,7 @@ async def edit_post(site_id: str, pid: str, req: Request):
 async def delete_post(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
     p = await _post(site_id, pid)
+    locks.guard(c, p)
     if p["status"] == "published":
         raise ApiError(409, "published", "A published post cannot be deleted here; remove it in the site's CMS.")
     await media.remove((p["image"] or {}).get("key"))
@@ -307,8 +309,9 @@ async def _set_image(c, site_id: str, p: dict, img: dict | None, action: str) ->
     return await posts.shape(dict(row), site_id)
 
 
-async def _photo_ok(site_id: str, pid: str) -> dict:
+async def _photo_ok(c, site_id: str, pid: str) -> dict:
     p = await _post(site_id, pid)
+    locks.guard(c, p)
     ed = (await db.settings(["editable_statuses"])).get("editable_statuses") or ["pending"]
     if p["status"] not in ed:
         raise ApiError(409, "not_editable", f"A post that is {p['status']} cannot change its photo.")
@@ -318,7 +321,7 @@ async def _photo_ok(site_id: str, pid: str) -> dict:
 @r.post("/sites/{site_id}/posts/{pid}/image/pick")
 async def pick(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
-    p = await _photo_ok(site_id, pid)
+    p = await _photo_ok(c, site_id, pid)
     d = await body(req)
     if not d.get("full"):
         raise validate.bad({"full": "The photo's 'full' address from the search result"})
@@ -335,7 +338,7 @@ async def pick(site_id: str, pid: str, req: Request):
 @r.post("/sites/{site_id}/posts/{pid}/image")
 async def upload(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
-    p = await _photo_ok(site_id, pid)
+    p = await _photo_ok(c, site_id, pid)
     form = await req.form()
     f = form.get("file")
     if f is None or not hasattr(f, "read"):
@@ -354,7 +357,7 @@ async def upload(site_id: str, pid: str, req: Request):
 @r.delete("/sites/{site_id}/posts/{pid}/image")
 async def remove_image(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
-    p = await _photo_ok(site_id, pid)
+    p = await _photo_ok(c, site_id, pid)
     return ok(await _set_image(c, site_id, p, None, "post.photo_remove"))
 
 
@@ -367,3 +370,31 @@ async def media_get(site_id: str, pid: str, req: Request):
         raise ApiError(404, "not_found", "This post has no photo.")
     return Response(await media.load(img["key"]), media_type=img.get("ctype") or "application/octet-stream",
                     headers={"Cache-Control": "private, max-age=3600"})
+
+
+# ---------------------------------------------------------------- editing locks
+@r.post("/sites/{site_id}/posts/{pid}/lock")
+async def lock(site_id: str, pid: str, req: Request):
+    c = await caller(req); await site_of(c, site_id)
+    p = await _post(site_id, pid)
+    row = await locks.take(c, site_id, pid, force=False)
+    if not row:
+        locks.guard(c, await _post(site_id, pid))
+    return ok(locks.shape(row or p))
+
+
+@r.delete("/sites/{site_id}/posts/{pid}/lock")
+async def unlock(site_id: str, pid: str, req: Request):
+    c = await caller(req); await site_of(c, site_id)
+    await _post(site_id, pid)
+    await locks.release(c, site_id, pid)
+    return ok({"released": True})
+
+
+@r.post("/sites/{site_id}/posts/{pid}/takeover")
+async def takeover(site_id: str, pid: str, req: Request):
+    c = await caller(req); await site_of(c, site_id)
+    before = locks.holder(await _post(site_id, pid))
+    row = await locks.take(c, site_id, pid, force=True)
+    await audit(c.name, "post.takeover", account_id=c.account_id, site_id=site_id, target=pid, detail={"from": before})
+    return ok(await posts.shape(row, site_id))

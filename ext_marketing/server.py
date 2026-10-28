@@ -11,8 +11,9 @@ from fastapi.responses import JSONResponse
 
 import asyncio
 
-from . import db, jobs, keywords, posts, routes_admin, routes_client, routes_content, routes_posts, routes_strapi  # noqa: F401 (keywords/posts register their jobs)
+from . import db, jobs, keywords, posts, routes_admin, routes_client, routes_content, routes_posts, routes_website  # noqa: F401 (keywords/posts register their jobs)
 from .auth import ApiError
+from . import idempotency, website
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")   # our own errors reach the journal
 log = logging.getLogger("ext_marketing")
@@ -38,9 +39,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Quantum1st Marketing API", version="1", lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url="/api/v1/openapi.json")
+app.middleware("http")(idempotency.middleware)
 app.include_router(routes_client.r)
 app.include_router(routes_admin.r)
-app.include_router(routes_strapi.r)
+app.include_router(routes_website.r)
 app.include_router(routes_content.r)
 app.include_router(routes_posts.r)
 
@@ -88,6 +90,9 @@ async def meta():
         "metrics": metrics,
         "limits": {"metaTitle": s.get("meta_title_max"), "metaDescription": s.get("meta_description_max"),
                    "photoMaxBytes": s.get("photo_max_bytes"), "photoTypes": s.get("photo_types"),
-                   "pageSizeDefault": s.get("page_size_default"), "pageSizeMax": s.get("page_size_max")},
+                   "pageSizeDefault": s.get("page_size_default"), "pageSizeMax": s.get("page_size_max"),
+                   "lockMinutes": s.get("lock_minutes")},
         "pollSeconds": s.get("client_poll_seconds"),
+        "features": s.get("features") or [],
+        "targetTypes": await website.target_types(),
     }}
