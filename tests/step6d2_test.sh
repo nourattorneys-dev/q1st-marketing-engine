@@ -19,7 +19,7 @@ as() { curl -s -H "X-Api-Key: $KEY" -H "X-Acting-User: sara" -H 'Content-Type: a
 MPID=$(systemctl show -p MainPID --value nour-mkt-ext)
 py() { sudo env -i $(sudo cat /proc/$MPID/environ | tr '\0' '\n' | grep -E '^(POSTGRES_DSN|EXT_MKT_|MINIO_|PEXELS_)' | xargs) EXT_SRC=/opt/nour/src /opt/nour/venv/bin/python "$@" 2>&1 | tail -1; }
 WB=$(python3 -c "import json,sys; print(json.dumps({'version':0,'type':'wordpress','settings':{'url':sys.argv[1],'username':sys.argv[2],'postType':'post','publishAs':'draft'},'secret':sys.argv[3],'fieldMap':{'title':'title','slug':'slug','subtitle':'excerpt','metaTitle':'yoast.title','metaDescription':'yoast.description'},'body':{'format':'html'},'arabic':{'mode':'translatepress'}}))" "$WP_URL" "$WP_USER" "$WP_PASS")
-check "T0 website connected; plugin 0.3 or newer" "$(as -X PUT $U/settings/website -d "$WB" | j "d['data']['status']")|$($PSQL "select left(config->'learned'->>'plugin',3) from ext_marketing.site_connections where site_id='$SID' and type='website'")" "ok|0.3"
+check "T0 website connected; plugin 0.4.0 or newer (stores translations)" "$(as -X PUT $U/settings/website -d "$WB" | j "d['data']['status']")|$($PSQL "select string_to_array(config->'learned'->>'plugin','.')::int[] >= '{0,4,0}' from ext_marketing.site_connections where site_id='$SID' and type='website'")" "ok|t"
 
 # a source and its twin, written directly (the model is not needed here): straight quotes and -- on purpose, which the
 # website turns into typographic characters when it renders the page
