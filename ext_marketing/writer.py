@@ -365,9 +365,11 @@ async def translate(site: dict, source: dict, twin: dict, note: str | None = Non
                               {"role": "user", "content": json.dumps({"before": ctx, "pieces": ask}, ensure_ascii=False)}],
                              s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
             try:
-                got = llm.json_from(raw).get("pieces") or {}
+                obj = llm.json_from(raw)
             except ValueError:
-                got = {}
+                obj = {}
+            # the ids may come wrapped as asked ({"pieces": {...}}) or as the object itself ({"p1": ...}): either is the answer
+            got = obj.get("pieces") if isinstance(obj.get("pieces"), (dict, list)) else {k: v for k, v in obj.items() if k in ask}
             if isinstance(got, list):                                   # answered a list: only usable when it lines up one to one
                 got = dict(zip(ask, got)) if len(got) == len(ask) else {}
             done.update({k: str(v).strip() for k, v in got.items() if k in ask and isinstance(v, (str, int, float)) and str(v).strip()})

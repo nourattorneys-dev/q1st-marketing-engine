@@ -26,7 +26,7 @@ async def main():
             got = f"<no JSON: {e}>"
         print(json.dumps({"sentIds": list(sent) if isinstance(sent, dict) else None,
                           "answerType": type(got).__name__, "answerIds": list(got) if isinstance(got, dict) else (len(got) if isinstance(got, list) else got),
-                          "maxTokens": max_tokens, "tokensOut": b, "raw": text[:400]}, ensure_ascii=False))
+                          "maxTokens": max_tokens, "tokensOut": b, "raw": text[:400], "rawChars": len(text)}, ensure_ascii=False))
         return text, a, b
     llm.chat = spy
     site = dict(await db.pool().fetchrow(f"SELECT * FROM {db.SCHEMA}.sites LIMIT 1") or {"id": "none", "name": "Probe", "url": "https://example.com",

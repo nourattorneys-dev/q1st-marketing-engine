@@ -42,6 +42,8 @@ async def chat(messages, max_tokens, temperature=0.3):
         keys = list(user["pieces"])
         if MODE.get("drop_once") and "were missing" not in sysm:
             keys = keys[:-1]                                            # one id left out -> only that id is asked again
+        if MODE.get("unwrapped"):
+            return json.dumps({k: f"ترجمة {k}" for k in keys}), 1, 1     # the ids without the "pieces" wrapper (seen from the real model)
         if MODE.get("as_list"):
             return json.dumps({"pieces": [f"ترجمة {k}" for k in keys]}), 1, 1
         return json.dumps({"pieces": {k: f"ترجمة {k}" for k in keys}}), 1, 1
@@ -62,6 +64,9 @@ async def main():
     CALLS.clear(); CALLS.update(pieces=0, fields=0); MODE["drop_once"] = True
     out = await writer.translate({"id": "s"}, src, tw)
     ok("a left-out piece is asked for again, alone", CALLS["pieces"] == 4 and len(CALLS["sent"]) == 8 and M.shape(out["content"]) == M.shape(H1), CALLS)
+    MODE.clear(); MODE["unwrapped"] = True; CALLS.clear(); CALLS.update(pieces=0, fields=0)
+    out = await writer.translate({"id": "s"}, src, tw)
+    ok("an answer with the ids but without the wrapper is used", M.shape(out["content"]) == M.shape(H1) and CALLS["pieces"] == 2, CALLS)
     MODE.clear(); MODE["as_list"] = True; CALLS.clear(); CALLS.update(pieces=0, fields=0)
     out = await writer.translate({"id": "s"}, src, tw)
     ok("an answer given as a list of the right length is still used", M.shape(out["content"]) == M.shape(H1) and CALLS["pieces"] == 2, CALLS)
