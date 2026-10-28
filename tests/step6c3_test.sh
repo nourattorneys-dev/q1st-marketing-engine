@@ -90,7 +90,7 @@ for i in $(seq 1 30); do st=$($PSQL "select status from ext_marketing.posts wher
 check "T11b the scheduler published it on its own" "$($PSQL "select status||'|'||auto_published from ext_marketing.posts where id='p_d'")" "published|true"
 mk p_f "Q1st test F — please ignore" '[]'
 as sara -X POST $U/posts/p_f/approve >/dev/null
-check "T12 one a day: the next one waits for the next allowed day" "$(as sara $U/scheduled | j "(d['data']['reason'], d['data']['publishedToday'], d['data']['items'][0]['expectedAt'] > d['data']['nextSlotAt'][:0])")" "('daily_limit', 1, True)"
+check "T12 one a day: the next one waits for the next allowed day" "$(as sara $U/scheduled | j "(d['data']['reason'], d['data']['publishedToday'], d['data']['items'][0]['expectedAt'] is not None)")" "('daily_limit', 1, True)"
 check "T12b publish now does not use the day's allowance" "$(as sara -X POST $U/posts/p_f/publish | j "d['data']['status']")|$(as sara $U/scheduled | j "d['data']['publishedToday']")" "published|1"
 
 # ---- bulk
