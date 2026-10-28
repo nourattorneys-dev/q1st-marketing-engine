@@ -218,6 +218,11 @@ async def _as_translation(p: dict, site: dict, t: dict, secret: str, auto: bool,
     if res.get("missed"):
         raise Failed(f"{len(res['missed'])} of {res.get('sent')} pieces were not found on the published page (it may have been edited "
                      "on the website). Publish the source again, then retry this.")
+    if int(res.get("stored") or 0) < int(res.get("matched") or 0):
+        import json as _json
+        log.warning("translation not stored for %s: %s", p["id"], _json.dumps(res.get("debug"), ensure_ascii=False)[:800])
+        raise Failed(f"The website matched {res.get('matched')} pieces but stored {res.get('stored')}. Nothing is marked published. "
+                     f"Details: {_json.dumps(res.get('debug'), ensure_ascii=False)[:600]}")
     now = datetime.now(timezone.utc)
     pub = {"target": "translatepress", "url": res.get("url"), "externalId": sp["externalId"], "at": now.isoformat(),
            "stored": res.get("stored"), "auto": auto}

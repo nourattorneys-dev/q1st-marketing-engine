@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Q1st Connector
  * Description: Lets the Quantum1st marketing engine publish approved articles to this site: signs it in on hosts that drop the login header, writes the SEO title and description, stores an article's translation in TranslatePress, and reports what the site has.
- * Version: 0.3.2
+ * Version: 0.3.3
  * Requires at least: 5.6
  * Requires PHP: 7.4
  * Author: Quantum1st
@@ -11,7 +11,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('Q1ST_CONNECTOR_VERSION', '0.3.2');
+define('Q1ST_CONNECTOR_VERSION', '0.3.3');
 
 /*
  * Sign-in. Many hosts remove the standard Authorization header before WordPress sees it, so the engine also sends the
@@ -165,8 +165,13 @@ function q1st_translate($r) {
     foreach ($originals as $o) {
         if (isset($check[$o]) && (int) $check[$o]->status === 2 && $check[$o]->translated === $pairs[$o]) { $stored++; }
     }
+    $first = $rows ? reset($rows) : null;
+    $debug = array('found' => is_array($rows) ? count($rows) : gettype($rows), 'updated' => count($update),
+                   'ourKeys' => array_slice($originals, 0, 2), 'theirKeys' => is_array($rows) ? array_slice(array_keys($rows), 0, 2) : null,
+                   'rowShape' => $first ? array_keys((array) $first) : null,
+                   'afterUpdate' => ($c = $check ? reset($check) : null) ? array('status' => $c->status, 'translated' => mb_substr((string) $c->translated, 0, 40)) : null);
     return array('language' => $code, 'sent' => count((array) $b['pieces']), 'matched' => count($pairs), 'stored' => $stored,
-                 'missed' => $missed, 'renderedPieces' => count($rendered),
+                 'missed' => $missed, 'renderedPieces' => count($rendered), 'debug' => $debug,
                  'url' => trailingslashit(home_url()) . (isset($settings['url-slugs'][$code]) ? $settings['url-slugs'][$code] : $code) . '/' . $p->post_name . '/');
 }
 
