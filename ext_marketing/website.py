@@ -2,7 +2,7 @@
 The portal's form is described by the setting website_target_types; only types with an adapter here are offered."""
 from __future__ import annotations
 
-from . import db, strapi
+from . import db, strapi, wordpress
 
 S = db.SCHEMA
 
@@ -44,7 +44,38 @@ async def _strapi_check_url(url: str) -> str:
         raise Refused(e.message, "url")
 
 
-ADAPTERS = {"strapi": {"test": _strapi_test, "categories": _strapi_categories, "check_url": _strapi_check_url}}
+async def _strapi_publish(t: dict, secret: str, post: dict, image=None, status: str = "publish") -> dict:
+    try:
+        r = await strapi.publish({**_strapi_cfg(t), "siteUrl": (t.get("settings") or {}).get("siteUrl")}, secret,
+                                 {**post, "document_id": post.get("external_id")}, image, publish_now=status == "publish")
+    except strapi.StrapiError as e:
+        raise Refused(e.message, e.field)
+    return {"externalId": r["documentId"], "url": r["url"], "slug": r["slug"], "imageUrl": r["imageUrl"], "status": status}
+
+
+# ---------------------------------------------------------------- the WordPress adapter
+def _wp(fn):
+    async def run(*a, **k):
+        try:
+            return await fn(*a, **k)
+        except wordpress.WPError as e:
+            raise Refused(e.message, e.field)
+    return run
+
+
+async def _wp_test(t: dict, secret: str) -> dict:
+    return await _wp(wordpress.test)(t.get("settings") or {}, secret)
+
+
+async def _wp_categories(t: dict, secret: str) -> list:
+    return await _wp(wordpress.categories)(t.get("settings") or {}, secret)
+
+
+ADAPTERS = {
+    "strapi": {"test": _strapi_test, "categories": _strapi_categories, "check_url": _strapi_check_url, "publish": _strapi_publish},
+    "wordpress": {"test": _wp_test, "categories": _wp_categories, "check_url": _wp(wordpress.check_url),
+                  "publish": _wp(wordpress.publish), "remove": _wp(wordpress.remove)},
+}
 
 
 # ---------------------------------------------------------------- the stored record
@@ -100,3 +131,8 @@ async def test(t: dict, secret: str) -> dict:
 
 async def categories(t: dict, secret: str) -> list:
     return await ADAPTERS[t["type"]]["categories"](t, secret)
+
+
+async def publish(t: dict, secret: str, post: dict, image=None, status: str = "publish") -> dict:
+    """The neutral post -> the site's CMS. Returns {externalId, url, slug, imageUrl, status}; Refused with a plain message."""
+    return {**await ADAPTERS[t["type"]]["publish"](t, secret, post, image, status), "target": t["type"]}
