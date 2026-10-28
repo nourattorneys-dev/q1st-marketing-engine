@@ -1,0 +1,9 @@
+/opt/nour/src/staff_portal/shell.py:2983:# EXT-3 (2026-10-20): the Marketing clients section strings live in strings_mktclients.py; an existing key is never replaced.
+/opt/nour/src/staff_portal/shell.py:2985:    from .strings_mktclients import EN as _ENMC, AR as _ARMC
+/opt/nour/src/staff_portal/shell.py:3235:    ("grp_mkt_clients", [   # EXT-3b (2026-10-20): outside client sites on the ext_marketing service - its own part of the Admin menu
+/opt/nour/src/staff_portal/shell.py:3236:        ("hub_mkt_clients", "nav_hub_mkt_clients", "/hub/mkt_clients", "users", "admin"),   # EXT-3c (2026-10-20): one item, its pages fold under it
+/opt/nour/src/staff_portal/shell.py:3237:        ("mkt_clients", "nav_mkt_clients", "/marketing-clients", "users", "admin"),
+/opt/nour/src/staff_portal/shell.py:3342:ADMIN_ZONE = ("grp_ops", "grp_decide", "grp_mkt_clients", "grp_people", "grp_data", "grp_org", "grp_ai", "grp_health", "grp_records")   # UX-2a: the admin's part
+/opt/nour/src/staff_portal/shell.py:3355:    "hub_mkt_clients": (("mkt_clients", "mkt_plans", "mkt_settings"), ()),   # EXT-3c (2026-10-20)
+/opt/nour/src/staff_portal/main.py:212:from .routers import mkt_clients as _mkt_clients   # noqa: E402  EXT-3 (2026-10-20): outside client sites (ext_marketing)
+/opt/nour/src/staff_portal/main.py:213:app.include_router(_mkt_clients.router, prefix="/marketing-clients")

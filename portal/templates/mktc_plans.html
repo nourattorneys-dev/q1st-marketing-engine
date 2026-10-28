@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_icons.html" import ic %}
+{% from "_bits.html" import badge, hint with context %}
+{% block title %}{{ T.mc_plans_title }}{% endblock %}
+{% macro quota_rows(metrics, quotas) %}{% set q = {} %}{% for x in quotas %}{% set _ = q.update({x.metric: x}) %}{% endfor %}
+  <div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_quota_on }}</th><th>{{ T.mc_metric }}</th><th>{{ T.mc_limit }}{{ hint(T.mc_limit_h) }}</th><th>{{ T.mc_mode }}</th><th>{{ T.mc_warn }}{{ hint(T.mc_warn_h) }}</th></tr></thead>
+  {% for m in metrics %}{% set x = q.get(m.key) %}<tr><td><input type="checkbox" name="q_{{ m.key }}_on" {% if x %}checked{% endif %} aria-label="{{ m.label }}"></td><td>{{ m.label }}</td>
+    <td><input class="n-in" name="q_{{ m.key }}_limit" value="{{ x.limit if x and x.limit is not none else '' }}" inputmode="numeric" style="width:120px" placeholder="{{ T.mc_unlimited }}"></td>
+    <td><select class="n-in" name="q_{{ m.key }}_mode"><option value="hard" {% if not x or x.mode == 'hard' %}selected{% endif %}>{{ T.mc_mode_hard }}</option><option value="soft" {% if x and x.mode == 'soft' %}selected{% endif %}>{{ T.mc_mode_soft }}</option></select></td>
+    <td><input class="n-in" name="q_{{ m.key }}_warn" value="{{ x.warnAt if x and x.warnAt is not none else '' }}" inputmode="decimal" style="width:80px"></td></tr>{% endfor %}
+  </table></div>{% endmacro %}
+{% block content %}
+<div class="n-content">
+  <div class="n-ph"><div><h1>{{ T.mc_plans_title }}</h1><p>{{ T.mc_plans_sub }}</p></div><a class="n-btn s" href="/marketing-clients/">{{ T.mc_back }}</a></div>
+  {% if down %}<div class="n-card"><div class="n-empty"><p>{{ T.mc_err_down }}</p></div></div>{% endif %}
+  {% for p in rows %}
+  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("finance") }}<div><h2>{{ p.name }}</h2><div class="n-card-d">{% if p.price is not none %}{{ p.price }} {{ p.currency or '' }} / {{ p.billingPeriod }}{% endif %}</div></div>{{ badge(T.mc_plan_active if p.active else T.mc_st_closed, 'ok' if p.active else 'n') }}</div>
+    <form method="post" action="/marketing-clients/plans/{{ p.id }}/update" class="n-bd n-col" style="gap:14px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="version" value="{{ p.version }}">
+      <div class="n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end">
+        <div class="n-field"><label>{{ T.mc_plan_name }}</label><input class="n-in" name="name" value="{{ p.name }}" required style="width:200px"></div>
+        <div class="n-field"><label>{{ T.mc_price }}</label><input class="n-in" name="price" value="{{ p.price if p.price is not none else '' }}" inputmode="decimal" style="width:120px"></div>
+        <div class="n-field"><label>{{ T.mc_currency }}</label><input class="n-in" name="currency" value="{{ p.currency or '' }}" style="width:90px"></div>
+        <div class="n-field"><label>{{ T.mc_priority }}{{ hint(T.mc_priority_h) }}</label><input class="n-in" name="queue_priority" value="{{ p.queuePriority }}" inputmode="numeric" style="width:90px"></div>
+        <label class="n-check"><input type="checkbox" name="active" {% if p.active %}checked{% endif %}> {{ T.mc_plan_active }}</label></div>
+      {{ quota_rows(metrics, p.quotas) }}
+      <div><button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_save }}</button></div>
+    </form></div>
+  {% else %}{% if not down %}<div class="n-card"><div class="n-empty"><h3>{{ T.mc_no_plans }}</h3><p>{{ T.mc_no_plans_d }}</p></div></div>{% endif %}{% endfor %}
+  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("finance") }}<div><h2>{{ T.mc_plan_new }}</h2></div></div>
+    <form method="post" action="/marketing-clients/plans/new" class="n-bd n-col" style="gap:14px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end">
+        <div class="n-field"><label for="pl-name">{{ T.mc_plan_name }}</label><input class="n-in" id="pl-name" name="name" required style="width:200px"></div>
+        <div class="n-field"><label for="pl-price">{{ T.mc_price }}</label><input class="n-in" id="pl-price" name="price" inputmode="decimal" style="width:120px"></div>
+        <div class="n-field"><label for="pl-cur">{{ T.mc_currency }}</label><input class="n-in" id="pl-cur" name="currency" style="width:90px"></div>
+        <div class="n-field"><label for="pl-pri">{{ T.mc_priority }}{{ hint(T.mc_priority_h) }}</label><input class="n-in" id="pl-pri" name="queue_priority" value="0" inputmode="numeric" style="width:90px"></div></div>
+      {{ quota_rows(metrics, []) }}
+      <div><button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_plan_create }}</button></div>
+    </form></div>
+</div>
+{% endblock %}

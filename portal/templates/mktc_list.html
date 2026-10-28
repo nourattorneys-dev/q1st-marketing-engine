@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "_icons.html" import ic %}
+{% from "_bits.html" import badge, hint, when with context %}
+{% block title %}{{ T.mc_title }}{% endblock %}
+{% block content %}
+{# EXT-3 (2026-10-20): outside client sites on the ext_marketing service. Data lives in the service; this page only shows and sends. #}
+<div class="n-content">
+  <div class="n-ph"><div><h1>{{ T.mc_title }}</h1><p>{{ T.mc_sub }}</p></div>
+    <div class="n-row" style="gap:8px"><a class="n-btn s" href="/marketing-clients/plans">{{ ic("finance", 16) }}{{ T.nav_mkt_plans }}</a><a class="n-btn s" href="/marketing-clients/settings">{{ ic("settings", 16) }}{{ T.nav_mkt_settings }}</a></div></div>
+  {% if down %}<div class="n-card"><div class="n-empty"><p>{{ T.mc_err_down }}</p></div></div>{% endif %}
+  <div class="n-card">
+    {% if rows %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_name }}</th><th>{{ T.mc_plan }}</th><th>{{ T.mc_price }}</th><th>{{ T.mc_sites }}</th><th>{{ T.mc_status }}</th><th>{{ T.mc_created }}</th><th></th></tr></thead>
+      {% for a in rows %}<tr><td><a href="/marketing-clients/{{ a.id }}">{{ a.name }}</a></td><td>{{ a.planName or T.mc_no_plan }}</td>
+        <td class="num">{% if a.price is not none %}{{ a.price }} {{ a.currency or '' }}{% else %}—{% endif %}</td><td class="num">{{ a.siteCount }}</td>
+        <td>{{ badge(T['mc_st_' ~ a.status], 'ok' if a.status == 'active' else ('warn' if a.status == 'suspended' else 'n')) }}</td>
+        <td class="mut num">{{ when(a.createdAt) }}</td><td><a class="n-btn s" href="/marketing-clients/{{ a.id }}">{{ T.mc_open }}</a></td></tr>{% endfor %}
+    </table></div>{% elif not down %}<div class="n-empty"><h3>{{ T.mc_none }}</h3><p>{{ T.mc_none_d }}</p></div>{% endif %}
+  </div>
+  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("users") }}<div><h2>{{ T.mc_new }}</h2></div></div>
+    {% if not plans %}<div class="n-bd"><p class="n-mut">{{ T.mc_no_plans_d }} <a href="/marketing-clients/plans">{{ T.nav_mkt_plans }}</a></p></div>{% endif %}
+    <form method="post" action="/marketing-clients/new" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="n-field"><label for="mc-name">{{ T.mc_name }}</label><input class="n-in" id="mc-name" name="name" required style="width:240px"></div>
+      <div class="n-field"><label for="mc-plan">{{ T.mc_plan }}</label><select class="n-in" id="mc-plan" name="plan_id"><option value="">{{ T.mc_no_plan }}</option>{% for p in plans if p.active %}<option value="{{ p.id }}">{{ p.name }}{% if p.price is not none %} · {{ p.price }} {{ p.currency or '' }}{% endif %}</option>{% endfor %}</select></div>
+      <div class="n-field"><label for="mc-price">{{ T.mc_price_override }}{{ hint(T.mc_price_override_h) }}</label><input class="n-in" id="mc-price" name="price_override" inputmode="decimal" style="width:140px"></div>
+      <div class="n-field"><label for="mc-notes">{{ T.mc_notes }}</label><input class="n-in" id="mc-notes" name="notes" style="width:260px"></div>
+      <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_create }}</button>
+    </form></div>
+</div>
+{% endblock %}

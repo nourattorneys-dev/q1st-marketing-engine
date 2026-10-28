@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_icons.html" import ic %}
+{% from "_bits.html" import when with context %}
+{% block title %}{{ T.mc_settings_title }}{% endblock %}
+{% block content %}
+<div class="n-content">
+  <div class="n-ph"><div><h1>{{ T.mc_settings_title }}</h1><p>{{ T.mc_settings_sub }}</p></div><a class="n-btn s" href="/marketing-clients/">{{ T.mc_back }}</a></div>
+  {% if down %}<div class="n-card"><div class="n-empty"><p>{{ T.mc_err_down }}</p></div></div>{% else %}
+  <form method="post" action="/marketing-clients/settings" class="n-card"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_key }}</th><th>{{ T.mc_value }}</th><th>{{ T.mc_updated }}</th></tr></thead>
+      {% for s in rows %}<tr><td><code class="n-code">{{ s.key }}</code><div class="n-mut n-sm">{{ s.description or '' }}</div></td>
+        <td><input class="n-in" name="s_{{ s.key }}" value="{{ s.text }}" dir="ltr" style="width:100%;min-width:180px;font-family:monospace" aria-label="{{ s.key }}"></td>
+        <td class="mut n-sm">{% if s.updatedBy %}{{ s.updatedBy }} · {% endif %}{{ when(s.updatedAt) }}</td></tr>{% endfor %}
+    </table></div>
+    <div class="n-bd"><button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_save }}</button></div>
+  </form>{% endif %}
+</div>
+{% endblock %}
