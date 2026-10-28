@@ -52,7 +52,7 @@ check "T4 the twin no longer waits in the queue" "$(as $U/scheduled | j "[x['wai
 TP=$(as -X POST $U/posts/p_tw/publish)
 echo "      $(echo "$TP" | j "d['data']['published'] if d.get('ok') else d['error']")"
 check "T5 the twin is stored as the translation, not a second post" "$(echo "$TP" | j "(d['data']['status'], d['data']['published']['target'], d['data']['published']['externalId']=='$(echo "$SP" | j "d['data']['published']['externalId']")')")" "('published', 'translatepress', True)"
-check "T5b every piece plus title and SEO fields stored as reviewed" "$(echo "$TP" | j "d['data']['published']['stored']>=11")" "True"
+check "T5b every piece plus title and SEO fields stored as reviewed" "$(echo "$TP" | j "d['data']['published']['stored']>=10")" "True"
 check "T5c its address is the source's under /ar/" "$(echo "$TP" | j "'/ar/' in d['data']['published']['url']")" "True"
 check "T6 one publish counted for each" "$($PSQL "select coalesce(sum(qty),0) from ext_marketing.usage_events where site_id='$SID' and metric='publishes'")" "2"
 # a twin whose structure no longer matches is refused before anything is written

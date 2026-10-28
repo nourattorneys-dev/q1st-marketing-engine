@@ -208,7 +208,7 @@ async def _as_translation(p: dict, site: dict, t: dict, secret: str, auto: bool,
     a, b = mirror.segments(src["content"] or ""), mirror.segments(p["content"] or "")
     if mirror.shape(src["content"] or "") != mirror.shape(p["content"] or "") or len(a) != len(b):
         raise Failed("This version no longer matches the structure of the one it translates. Ask for changes to translate it again.")
-    pieces = [{"source": x, "translated": y} for x, y in zip(a, b)]
+    pieces = [{"source": x, "translated": y} for x, y in zip(a, b) if mirror.has_words(x)]   # pieces without letters are not stored
     extra = [{"source": s, "translated": d} for s, d in ((src["title"], p["title"]), (src["meta_title"], p["meta_title"]),
                                                           (src["meta_description"], p["meta_description"])) if s and d]
     try:

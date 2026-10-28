@@ -342,7 +342,7 @@ async def translate(site: dict, source: dict, twin: dict, note: str | None = Non
     tk = [0, 0]
     # pieces without letters (punctuation, numbers, symbols) are not language: kept, with the target language's punctuation
     punct = (s.get("twin_punctuation") or {}).get(lang) or {}
-    words = [i for i, p in enumerate(pieces) if re.search(r"[^\W\d_]", p)]
+    words = [i for i, p in enumerate(pieces) if M.has_words(p)]
     out = ["".join(punct.get(ch, ch) for ch in p) for p in pieces]
     guide = (f"You translate a website article from {sn} into {ln} for the website below. Write natural, fluent {ln} as a native "
              "writer would, keeping the meaning, facts, names and numbers exactly; never add or drop content. The text comes as "

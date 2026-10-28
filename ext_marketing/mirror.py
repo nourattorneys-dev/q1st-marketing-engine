@@ -2,7 +2,7 @@
 other language is built by putting translated pieces back into the source's own HTML, so both have exactly the same
 headings, paragraphs, list items, FAQ and tables in the same order (TranslatePress pairs translations by these pieces)."""
 from __future__ import annotations
-import hashlib, html as _h, json
+import hashlib, html as _h, json, re
 from html.parser import HTMLParser
 
 SKIP = {"script", "style"}
@@ -69,3 +69,8 @@ def rebuild(html: str, pieces: list[str]) -> str:
 
 def fingerprint(pieces: list[str]) -> str:
     return hashlib.sha256(json.dumps(pieces, ensure_ascii=False).encode()).hexdigest()[:32]
+
+
+def has_words(piece: str) -> bool:
+    """A piece with letters is language; one without (punctuation, numbers, symbols) is not translated or stored as a translation."""
+    return bool(re.search(r"[^\W\d_]", piece or ""))
