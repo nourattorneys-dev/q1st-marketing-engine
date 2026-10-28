@@ -60,10 +60,13 @@ async def scheduled(site_id: str, req: Request, page: int = 1, pageSize: int = 0
     st = await PB.state(site)
     rows, why, nxt = PB.plan(site, st)
     part = rows[(max(1, page) - 1) * size: max(1, page) * size]
-    items = [{**await posts.shape(x["post"], site_id, full=False), "position": x["position"], "expectedAt": x["expectedAt"], "waiting": x["waiting"]}
-             for x in part]
-    return ok({"autoPublish": bool(st["cfg"].get("autoPublish")), "nextSlotAt": nxt, "reason": why, "publishedToday": st["today"],
-               "perDay": st["cfg"].get("perDay"), "timezone": site["timezone"], "items": items},
+    items = []
+    for x in part:
+        p = await posts.shape(x["post"], site_id, full=False)
+        p["schedule"] = {**(p.get("schedule") or {}), "hold": x["post"]["hold"], "position": x["position"], "scheduledAt": x["expectedAt"]}
+        items.append({**p, "waiting": x["waiting"]})                     # waiting: why this one has no slot (on_hold, no_channel, ...)
+    return ok({"autoPublish": bool(st["cfg"].get("autoPublish")), "nextSlotAt": nxt, "waitingReason": why, "publishedToday": st["today"],
+               "perDay": st["cfg"].get("perDay"), "timezone": site["timezone"], "posts": items},
               {"page": max(1, page), "pageSize": size, "total": len(rows)})
 
 

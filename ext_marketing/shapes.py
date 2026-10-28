@@ -13,9 +13,10 @@ async def connection_types() -> list[str]:
 
 async def site(row: dict) -> dict:
     p = db.pool()
-    conns = {t: "missing" for t in await connection_types()}
-    for r in await p.fetch(f"SELECT type, status FROM {S}.site_connections WHERE site_id = $1", row["id"]):
-        conns[r["type"]] = r["status"]
+    conns: dict = {t: "missing" for t in await connection_types()}
+    conns["website"] = {"type": None, "status": "missing"}
+    for r in await p.fetch(f"SELECT type, status, config FROM {S}.site_connections WHERE site_id = $1", row["id"]):
+        conns[r["type"]] = {"type": (r["config"] or {}).get("type"), "status": r["status"]} if r["type"] == "website" else r["status"]
     counts = {k: 0 for k in ("suggestions", "pending", "approved", "scheduled", "published", "failed", "keywordsNew")}
     for r in await p.fetch(f"SELECT status, count(*) n FROM {S}.posts WHERE site_id = $1 GROUP BY 1", row["id"]):
         if r["status"] in counts:

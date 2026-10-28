@@ -52,7 +52,7 @@ check "T12b the secret is stored encrypted" "$($PSQL "select position('$ST' in e
 check "T13 a field-map change alone saves without a new test" "$(as sara -X PUT $U/settings/website -d '{"version":1,"fieldMap":{"title":"title"}}' | j "(d['data']['version'], d['data']['fieldMap'])")" "(2, {'title': 'title'})"
 check "T13b a stale version is refused" "$(as sara -X PUT $U/settings/website -d '{"version":1,"fieldMap":{}}' | j "d['error']['code']")" "version_conflict"
 check "T14 categories come from the connected website" "$(as sara $U/website/categories | j "d['ok'] and isinstance(d['data'], list)")" "True"
-check "T15 the site shows connections.website" "$(as sara $U | j "d['data']['connections']['website']")" "ok"
+check "T15 the site shows connections.website" "$(as sara $U | j "d['data']['connections']['website']['status']")" "ok"
 check "T15b the old Strapi routes are gone" "$(curl -s -o /dev/null -w '%{http_code}' "${H[@]}" $U/settings/strapi)" "404"
 
 # ---- editing locks (a post row made directly: no model needed here)

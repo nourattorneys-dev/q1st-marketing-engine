@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
 
 import asyncio
@@ -61,6 +62,14 @@ async def _api_error(request: Request, e: ApiError):
     return err(e.status, e.code, e.message, **e.extra)
 
 
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, e: StarletteHTTPException):
+    # an unknown address or method answers in the same envelope as every other error (the site's app reads error.code)
+    code = {404: "not_found", 405: "method_not_allowed"}.get(e.status_code, "http_error")
+    msg = {404: "This address does not exist in the API.", 405: "This method is not allowed here."}.get(e.status_code, str(e.detail))
+    return err(e.status_code, code, msg)
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation(request: Request, e: RequestValidationError):
     return err(400, "invalid_input", "Check the request fields.",
@@ -87,8 +96,7 @@ async def health():
 async def meta():
     """Lists and limits the portal must not hard-code."""
     s = await db.settings()
-    metrics = [dict(r) for r in await db.pool().fetch(
-        f"SELECT key, label, unit FROM {db.SCHEMA}.metrics WHERE active ORDER BY key")]
+    metrics = [r["key"] for r in await db.pool().fetch(f"SELECT key FROM {db.SCHEMA}.metrics WHERE active ORDER BY key")]   # names (spec v1.1 Meta)
     return {"ok": True, "data": {
         "languages": s.get("languages"), "kinds": s.get("kinds"),
         "platforms": s.get("platforms"), "categories": s.get("site_categories"),

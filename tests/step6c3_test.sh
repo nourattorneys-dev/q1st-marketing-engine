@@ -60,8 +60,8 @@ $PSQL "update ext_marketing.posts set status='pending', review_note=null where i
 # ---- the queue
 as sara -X POST $U/posts/p_s/approve >/dev/null
 SQ=$(as sara $U/scheduled)
-check "T8 auto-publish off: the queue says why" "$(echo "$SQ" | j "(d['data']['autoPublish'], d['data']['reason'], d['data']['nextSlotAt'])")" "(False, 'auto_publish_off', None)"
-check "T8b queue order and the social post waiting for its channel" "$(echo "$SQ" | j "[(x['id'], x['position'], x['waiting']) for x in d['data']['items']]")" "[('p_b', 1, None), ('p_a', 2, None), ('p_s', 3, 'no_channel')]"
+check "T8 auto-publish off: the queue says why" "$(echo "$SQ" | j "(d['data']['autoPublish'], d['data']['waitingReason'], d['data']['nextSlotAt'])")" "(False, 'auto_publish_off', None)"
+check "T8b queue order and the social post waiting for its channel" "$(echo "$SQ" | j "[(x['id'], x['schedule']['position'], x['waiting']) for x in d['data']['posts']]")" "[('p_b', 1, None), ('p_a', 2, None), ('p_s', 3, 'no_channel')]"
 check "T8c the social post has no Publish button" "$(as sara $U/posts/p_s | j "'publishNow' in d['data']['actions']")" "False"
 check "T8d publishing it now says why" "$(as sara -X POST $U/posts/p_s/publish | j "d['error']['code']")" "no_channel"
 
@@ -84,13 +84,13 @@ as sara -X POST $U/posts/p_d/approve >/dev/null
 DOW=$(TZ=Asia/Dubai date +%a | tr 'A-Z' 'a-z')
 V=$(as sara $U/settings/publishing | j "d['data']['version']")
 as sara -X PUT $U/settings/publishing -d '{"version":'$V',"autoPublish":true,"perDay":1,"days":["'$DOW'"],"from":"00:00","to":"23:59","gapMinutes":0}' >/dev/null
-check "T11 a slot is due now, for the first post that takes a slot" "$(as sara $U/scheduled | j "(d['data']['reason'], [x['id'] for x in d['data']['items'] if x['waiting'] is None][0])")" "(None, 'p_d')"
+check "T11 a slot is due now, for the first post that takes a slot" "$(as sara $U/scheduled | j "(d['data']['waitingReason'], [x['id'] for x in d['data']['posts'] if x['waiting'] is None][0])")" "(None, 'p_d')"
 echo "      waiting for the scheduler to publish p_d (checks every scheduler_poll_seconds)..."
 for i in $(seq 1 30); do st=$($PSQL "select status from ext_marketing.posts where id='p_d'"); [ "$st" = published ] || [ "$st" = failed ] && break; sleep 5; done
 check "T11b the scheduler published it on its own" "$($PSQL "select status||'|'||auto_published from ext_marketing.posts where id='p_d'")" "published|true"
 mk p_f "Q1st test F — please ignore" '[]'
 as sara -X POST $U/posts/p_f/approve >/dev/null
-check "T12 one a day: the next one waits for the next allowed day" "$(as sara $U/scheduled | j "(d['data']['reason'], d['data']['publishedToday'], [x['expectedAt'] for x in d['data']['items'] if x['id']=='p_f'][0] is not None)")" "('daily_limit', 1, True)"
+check "T12 one a day: the next one waits for the next allowed day" "$(as sara $U/scheduled | j "(d['data']['waitingReason'], d['data']['publishedToday'], [x['schedule']['scheduledAt'] for x in d['data']['posts'] if x['id']=='p_f'][0] is not None)")" "('daily_limit', 1, True)"
 check "T12b publish now does not use the day's allowance" "$(as sara -X POST $U/posts/p_f/publish | j "d['data']['status']")|$(as sara $U/scheduled | j "d['data']['publishedToday']")" "published|1"
 
 # ---- bulk

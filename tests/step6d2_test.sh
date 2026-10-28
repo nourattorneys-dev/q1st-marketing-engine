@@ -48,7 +48,7 @@ check "T2 the twin cannot go before its source" "$(as -X POST $U/posts/p_tw/publ
 as -X POST $U/posts/p_tw/approve >/dev/null; $PSQL "update ext_marketing.posts set status='approved', error=null where id='p_tw'" >/dev/null
 SP=$(as -X POST $U/posts/p_src/publish)
 check "T3 the source is published to WordPress (draft)" "$(echo "$SP" | j "(d['data']['status'], d['data']['published']['target'])")" "('published', 'wordpress')"
-check "T4 the twin no longer waits in the queue" "$(as $U/scheduled | j "[x['waiting'] for x in d['data']['items'] if x['id']=='p_tw'][0]")" "None"
+check "T4 the twin no longer waits in the queue" "$(as $U/scheduled | j "[x['waiting'] for x in d['data']['posts'] if x['id']=='p_tw'][0]")" "None"
 TP=$(as -X POST $U/posts/p_tw/publish)
 echo "      $(echo "$TP" | j "d['data']['published'] if d.get('ok') else d['error']")"
 check "T5 the twin is stored as the translation, not a second post" "$(echo "$TP" | j "(d['data']['status'], d['data']['published']['target'], d['data']['published']['externalId']=='$(echo "$SP" | j "d['data']['published']['externalId']")')")" "('published', 'translatepress', True)"

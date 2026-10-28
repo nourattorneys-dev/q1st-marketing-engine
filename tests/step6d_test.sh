@@ -63,7 +63,7 @@ check "T10b the twin now matches the edited source" "$($PSQL "select source_hash
 # ---- the queue: on a TranslatePress site the twin waits until its source is published
 as sara -X POST $U/posts/$SRC/approve -d '{"overrideReason":"test"}' >/dev/null
 as sara -X POST $U/posts/$TW/approve -d '{"overrideReason":"test"}' >/dev/null
-check "T11 the approved twin waits for its source to be published" "$(as sara $U/scheduled | j "[x['waiting'] for x in d['data']['items'] if x['id']=='$TW'][0]")" "source_not_published"
+check "T11 the approved twin waits for its source to be published" "$(as sara $U/scheduled | j "[x['waiting'] for x in d['data']['posts'] if x['id']=='$TW'][0]")" "source_not_published"
 
 check "T12 Nour untouched" "$($PSQL "select count(*) from public.marketing_approvals")" "$NA"
 check "T13 no errors in the journal" "$(sudo journalctl -u nour-mkt-ext --since "$T0" --no-pager | grep -c ' ERROR \|Traceback')" "0"
