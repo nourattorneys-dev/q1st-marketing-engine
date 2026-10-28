@@ -6,6 +6,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -48,7 +49,8 @@ app.include_router(routes_posts.r)
 
 
 def err(status: int, code: str, message: str, **extra):
-    return JSONResponse({"ok": False, "error": {"code": code, "message": message, **extra}}, status_code=status)
+    # extra may carry dates (e.g. lockedAt): encoded the same way as every success response
+    return JSONResponse(jsonable_encoder({"ok": False, "error": {"code": code, "message": message, **extra}}), status_code=status)
 
 
 @app.exception_handler(ApiError)
