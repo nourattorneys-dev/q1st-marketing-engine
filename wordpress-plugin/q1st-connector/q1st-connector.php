@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Q1st Connector
  * Description: Lets the Quantum1st marketing engine publish approved articles to this site: signs it in on hosts that drop the login header, writes the SEO title and description, stores an article's translation in TranslatePress, and reports what the site has.
- * Version: 0.3.0
+ * Version: 0.3.1
  * Requires at least: 5.6
  * Requires PHP: 7.4
  * Author: Quantum1st
@@ -11,7 +11,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('Q1ST_CONNECTOR_VERSION', '0.3.0');
+define('Q1ST_CONNECTOR_VERSION', '0.3.1');
 
 /*
  * Sign-in. Many hosts remove the standard Authorization header before WordPress sees it, so the engine also sends the
@@ -59,7 +59,7 @@ add_action('rest_api_init', function () {
     register_rest_route('q1st/v1', '/translate/(?P<id>\\d+)', array(
         'methods' => 'POST',
         'permission_callback' => function ($r) { return current_user_can('edit_post', (int) $r['id']); },
-        'callback' => 'q1st_translate',
+        'callback' => 'q1st_translate_safe',
     ));
 });
 
@@ -90,6 +90,15 @@ function q1st_norm($s) {
  * same text, so text other plugins add to the page is skipped. "extra" are single strings (title, SEO title, description).
  * Every pair is written as reviewed by a person; the answer says how many matched and lists any that did not.
  */
+/* Any PHP error in a translation is answered as a plain message (with where it happened), never as the site's error page. */
+function q1st_translate_safe($r) {
+    try {
+        return q1st_translate($r);
+    } catch (\Throwable $e) {
+        return new WP_Error('translate_error', $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')', array('status' => 500));
+    }
+}
+
 function q1st_translate($r) {
     if (!class_exists('TRP_Translate_Press')) {
         return new WP_Error('no_translatepress', 'TranslatePress is not active on this site.', array('status' => 409));
