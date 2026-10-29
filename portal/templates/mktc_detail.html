@@ -24,6 +24,9 @@
     .mck-warn svg{flex:none;color:var(--warn);margin-top:1px}
     .mck-key{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:10px;background:var(--bg-2);overflow:hidden}
     .mck-key input{flex:1;min-width:0;border:0;background:transparent;color:inherit;padding:12px 14px;font:500 13.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.2px;outline:none}
+    .wh-sub>td{padding-top:0;border-top:0}.wh-d summary{cursor:pointer;font-size:13px;color:var(--mut,inherit);padding:4px 0;list-style-position:inside}
+    .wh-d .wh-in{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows .25s ease,opacity .25s ease}.wh-d .wh-in>table{min-height:0;overflow:hidden}
+    .wh-d[open] .wh-in{grid-template-rows:1fr;opacity:1}@starting-style{.wh-d[open] .wh-in{grid-template-rows:0fr;opacity:0}}
     .mck-copy{flex:none;display:flex;gap:6px;align-items:center;border:0;border-inline-start:1px solid var(--line);background:transparent;color:inherit;padding:0 16px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
     .mck-copy:hover{background:var(--line)}
     .mck-copy:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
@@ -78,7 +81,7 @@
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_sites }}</h2></div></div>
     {% if d.sites %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_site_name }}</th><th>{{ T.mc_category }}</th><th>{{ T.mc_languages }}</th><th>{{ T.mc_conn }}</th><th></th></tr></thead>
       {% for s in d.sites %}<tr><td>{{ s.name }}{% if live_keys.get(s.id, 0) > 1 %} {{ badge(T.mc_keys_many | replace("{n}", live_keys.get(s.id) | string), "warn", True, T.mc_keys_many_h) }}{% endif %}<div class="n-mut n-sm" dir="ltr">{{ s.url }} · <code>{{ s.id }}</code></div></td><td>{{ cats.get(s.category, s.category) if s.category else '—' }}</td><td>{{ s.languages | join(', ') }}</td>
-        <td>{% for t, c in s.connections.items() %}{% set st = c.status if c is mapping else c %}{{ badge(((c.type or t) if c is mapping else t), 'ok' if st == 'ok' else ('warn' if st in ('expiring', 'error') else 'n'), True) }} {% endfor %}</td>
+        <td>{% for t, c in s.connections.items() %}{% set st = c.status if c is mapping else c %}{{ badge(((c.type or t) if c is mapping else t), 'ok' if st == 'ok' else ('warn' if st in ('expiring', 'error') else 'n'), True) }} {% endfor %}{% set w = (d.webhooks or {}).get(s.id) %}{% if w %}{{ badge(T.mc_wh_badge, 'ok' if w.status == 'ok' else ('warn' if w.status == 'failing' else 'n'), True, T['mc_wh_st_' ~ w.status]) }}{% endif %}</td>
         <td><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ s.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s d" data-confirm="{{ T.mc_site_delete_q }}" data-confirm-kind="danger">{{ T.mc_site_delete }}</button></form></td></tr>{% endfor %}
     </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_no_sites }}</div>{% endif %}
     <form method="post" action="/marketing-clients/{{ a.id }}/sites/new" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -90,6 +93,20 @@
       <div class="n-field"><label for="st-dl">{{ T.mc_default_lang }}</label><select class="n-in" id="st-dl" name="default_language">{% for l in meta.languages or [] %}<option value="{{ l }}">{{ l }}</option>{% endfor %}</select></div>
       <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_site_new }}</button></form></div>
 
+  {% set hooks = (d.webhooks or {}).items() | selectattr(1) | list %}
+  <div class="n-card" id="webhooks"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_wh }}{{ hint(T.mc_wh_h) }}</h2></div></div>
+    {% if hooks %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_key_site }}</th><th>{{ T.mc_wh_url }}</th><th>{{ T.mc_wh_status }}</th><th>{{ T.mc_wh_last }}</th><th>{{ T.mc_wh_waiting }}</th><th></th></tr></thead>
+      {% for sid, w in hooks %}<tr><td>{{ site_name.get(sid, sid) }}<div class="n-mut n-sm">{{ T.mc_wh_events }}: {{ w.events | length }}</div></td>
+        <td><code class="n-code" dir="ltr">{{ w.url }}</code>{% if w.lastError and w.status == 'failing' %}<div class="n-mut n-sm">{{ w.lastError }}</div>{% endif %}</td>
+        <td>{{ badge(T['mc_wh_st_' ~ w.status], 'ok' if w.status == 'ok' else ('warn' if w.status == 'failing' else 'n')) }}</td>
+        <td class="mut num">{{ when(w.lastDeliveryAt) if w.lastDeliveryAt else '—' }}</td><td class="num">{{ w.waiting }}</td>
+        <td><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ sid }}/webhook-test"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s">{{ T.mc_wh_test }}</button></form></td></tr>
+      {% if w.recent %}<tr class="wh-sub"><td colspan="6"><details class="wh-d"><summary>{{ T.mc_wh_recent }} ({{ w.recent | length }})</summary><div class="wh-in"><table class="n-t">
+        {% for x in w.recent %}<tr><td><code class="n-code" dir="ltr">{{ x.event }}</code></td><td>{{ badge(T['mc_wh_d_' ~ x.status], 'ok' if x.status == 'sent' else ('warn' if x.status in ('pending', 'failed') else 'n'), True) }}</td>
+          <td class="n-sm">{{ T.mc_wh_tries }}: {{ x.attempts }}{% if x.code %} · {{ x.code }}{% endif %}{% if x.error and x.status != 'sent' %}<div class="n-mut">{{ x.error }}</div>{% endif %}</td><td class="mut num">{{ when(x.at) }}</td></tr>{% endfor %}
+      </table></div></details></td></tr>{% endif %}{% endfor %}
+    </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_wh_none }}</div>{% endif %}
+  </div>
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("access") }}<div><h2>{{ T.mc_keys }}{{ hint(T.mc_keys_h) }}</h2></div></div>
     {% for sid, n in live_keys.items() if n > 1 %}<div class="n-bd" style="padding-top:0"><div class="n-row" style="gap:8px;align-items:center;background:var(--warn-bg);border-radius:10px;padding:8px 12px">{{ ic("warn", 16) }}<span>{{ T.mc_keys_many_site | replace("{site}", site_name.get(sid, sid)) | replace("{n}", n | string) }}</span></div></div>{% endfor %}
     {% if d['keys'] %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_key_prefix }}</th><th>{{ T.mc_key_site }}</th><th>{{ T.mc_key_label }}</th><th>{{ T.mc_created }}</th><th>{{ T.mc_key_used }}</th><th></th></tr></thead>

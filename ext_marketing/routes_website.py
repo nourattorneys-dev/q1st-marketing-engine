@@ -33,8 +33,8 @@ def _secret(d: dict) -> str:
 
 
 async def _status(site_id: str, status: str, error: str | None) -> None:
-    await db.pool().execute(f"UPDATE {S}.site_connections SET status=$2, last_error=$3, last_checked_at=now() WHERE site_id=$1 AND type='website'",
-                            site_id, status, error)
+    from . import webhooks
+    await webhooks.set_connection(site_id, "website", status, error)
 
 
 @r.get("/sites/{site_id}/settings/website")

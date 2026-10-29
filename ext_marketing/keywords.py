@@ -3,7 +3,7 @@ difficulty for the site's country); the model proposes; a person approves. Every
 from __future__ import annotations
 import asyncio, logging
 
-from . import db, jobs, llm, meter, profile, security, sitepages
+from . import db, jobs, llm, meter, profile, security, sitepages, webhooks
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.keywords")
@@ -114,15 +114,18 @@ async def propose(job: dict) -> dict:
     items = llm.json_from(raw).get("keywords") or []
     vol = {m["phrase"].lower(): m for m in market}
     added = skipped = 0
+    new_ids: list = []
     for it in items[: int(s["kw_propose_count"]) * 2]:
         if not isinstance(it, dict) or not isinstance(it.get("phrase"), str):
             continue
         lg = it.get("language") if it.get("language") in site["languages"] else site["default_language"]
         m = vol.get(it["phrase"].strip().lower(), {})
         a2, sk = await add(site["id"], [it["phrase"]], lg, "ai", "engine", (it.get("rationale") or "")[:300], m.get("volume"), m.get("difficulty"))
-        added += len(a2); skipped += len(sk)
+        added += len(a2); skipped += len(sk); new_ids += [x["id"] for x in a2]
         if added >= int(s["kw_propose_count"]):
             break
     await meter.record(job["account_id"], site["id"], "keywordProposals", 1, tokens_in=tin, tokens_out=tout, job_id=job["id"])
+    if new_ids:
+        await webhooks.emit(site["id"], "keywords.proposed", {"ids": new_ids})
     by_lang = {lg: await db.pool().fetchval(f"SELECT count(*) FROM {S}.keywords WHERE site_id=$1 AND source='ai' AND language=$2", site["id"], lg) for lg in langs}
     return {"added": added, "skipped": skipped, "pagesRead": len(pages), "readFromMeta": sum(1 for p in pages if p.get("read") == "meta"), "byLanguage": by_lang, "seeds": seeds, "marketData": len(market), "note": " ".join(x for x in (read_note, note) if x) or None, "readProblems": problems[:10]}

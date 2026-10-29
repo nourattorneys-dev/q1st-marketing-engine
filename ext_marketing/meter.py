@@ -21,3 +21,22 @@ async def record(account_id: str, site_id: str | None, metric: str, qty: int = 1
         await db.pool().execute(
             f"""INSERT INTO {S}.usage_events (account_id, site_id, metric, qty, tokens_in, tokens_out, job_id)
                 VALUES ($1,$2,'aiTokens',0,$3,$4,$5)""", account_id, site_id, tokens_in, tokens_out, job_id)
+    await _crossed(account_id, site_id, {**({metric: qty} if qty else {}), **({"aiTokens": tokens_in + tokens_out} if tokens_in or tokens_out else {})})
+
+
+async def _crossed(account_id: str, site_id: str | None, added: dict) -> None:
+    """When this usage crosses a quota's warning share or its limit, every site of the account is told (quota.warning,
+    quota.exceeded). Only the crossing sends, so each threshold is announced once a period."""
+    if not added:
+        return
+    from . import quotas, webhooks
+    for r in (await quotas.effective(account_id, site_id))["quotas"]:
+        n = added.get(r["metric"])
+        if not n or r["limit"] is None:
+            continue
+        used, before, limit = r["used"], r["used"] - n, r["limit"]
+        payload = {"metric": r["metric"], "used": used, "limit": limit}
+        if before < limit <= used:
+            await webhooks.emit_account(account_id, "quota.exceeded", {**payload, "mode": r["mode"]})
+        elif r["warnAt"] is not None and before < float(r["warnAt"]) * limit <= used < limit:
+            await webhooks.emit_account(account_id, "quota.warning", payload)

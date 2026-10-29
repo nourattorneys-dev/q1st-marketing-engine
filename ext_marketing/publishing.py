@@ -6,7 +6,7 @@ import asyncio, logging, re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import db, jobs, media, meter, mirror, quotas, security, website
+from . import db, jobs, media, meter, mirror, quotas, security, webhooks, website
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.publishing")
@@ -178,8 +178,8 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
             log.exception("publish %s", p["id"])
         await db.pool().execute(f"UPDATE {S}.posts SET status = 'failed', error = $2, updated_at = now() WHERE id = $1", p["id"], msg)
         if conn and isinstance(e, website.Refused):
-            await db.pool().execute(f"UPDATE {S}.site_connections SET status = 'error', last_error = $2, last_checked_at = now() "
-                                    f"WHERE site_id = $1 AND type = 'website'", site["id"], msg)
+            await webhooks.set_connection(site["id"], "website", "error", msg)
+        await webhooks.emit(site["id"], "post.failed", {"postId": p["id"], "error": msg})
         raise Failed(msg) from e
     now = datetime.now(timezone.utc)
     pub = {"target": res["target"], "url": res.get("url"), "externalId": res.get("externalId"), "at": now.isoformat(),
@@ -192,9 +192,9 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
             f"""UPDATE {S}.keywords SET status = 'covered', uses = uses + 1, updated_at = now()
                 WHERE site_id = $1 AND lower(phrase) = ANY($2) AND status IN ('new','approved')""",
             site["id"], [k.lower() for k in p["keywords"]])
-    await db.pool().execute(f"UPDATE {S}.site_connections SET status = 'ok', last_error = NULL, last_checked_at = now() "
-                            f"WHERE site_id = $1 AND type = 'website'", site["id"])
+    await webhooks.set_connection(site["id"], "website", "ok", None)
     await meter.record(site["account_id"], site["id"], "publishes", 1, job_id=job_id)
+    await webhooks.emit(site["id"], "post.published", {"postId": p["id"], "url": pub["url"], "platform": "website"})
     return dict(row)
 
 
@@ -230,6 +230,7 @@ async def _as_translation(p: dict, site: dict, t: dict, secret: str, auto: bool,
         f"""UPDATE {S}.posts SET status = 'published', published = $2, published_at = $3, auto_published = $4, error = NULL,
                version = version + 1, updated_at = now() WHERE id = $1 RETURNING *""", p["id"], pub, now, auto)
     await meter.record(site["account_id"], site["id"], "publishes", 1, job_id=job_id)
+    await webhooks.emit(site["id"], "post.published", {"postId": p["id"], "url": pub["url"], "platform": "website"})
     return dict(row)
 
 
@@ -249,10 +250,13 @@ async def publish_job(job: dict) -> dict:
 async def _recover() -> None:
     """A post left 'publishing' by a restart with no job to finish it becomes 'failed' (Retry in History)."""
     m = int((await db.settings(["job_stale_minutes"])).get("job_stale_minutes") or 30)
-    await db.pool().execute(
+    rows = await db.pool().fetch(
         f"""UPDATE {S}.posts p SET status = 'failed', error = 'Publishing stopped (service restart). Use Retry.', updated_at = now()
             WHERE p.status = 'publishing' AND p.updated_at < now() - make_interval(mins => $1)
-              AND NOT EXISTS (SELECT 1 FROM {S}.jobs j WHERE j.kind = 'post.publish' AND j.payload->>'postId' = p.id AND j.status IN ('queued','running'))""", m)
+              AND NOT EXISTS (SELECT 1 FROM {S}.jobs j WHERE j.kind = 'post.publish' AND j.payload->>'postId' = p.id AND j.status IN ('queued','running'))
+            RETURNING p.id, p.site_id, p.error""", m)
+    for x in rows:
+        await webhooks.emit(x["site_id"], "post.failed", {"postId": x["id"], "error": x["error"]})
 
 
 async def tick() -> int:

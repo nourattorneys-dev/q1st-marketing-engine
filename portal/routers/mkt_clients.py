@@ -273,6 +273,25 @@ async def delete_site(aid: str, sid: str, request: Request):
     return _back(f"{BASE}/{aid}", T, err, "mc_site_deleted")
 
 
+@router.post("/{aid}/sites/{sid}/webhook-test")
+async def webhook_test(aid: str, sid: str, request: Request):
+    """Sends one signed test event to the site's webhook; the message says whether it arrived."""
+    user, deny = _gate(request)
+    if deny:
+        return deny
+    T = _T(request, user)
+    d, err = await _api(user, "POST", f"/admin/v1/sites/{sid}/webhook/test")
+    last = ((d or {}).get("recent") or [{}])[0]
+    r = RedirectResponse(f"{BASE}/{aid}#webhooks", status_code=303)
+    if err:
+        set_flash(r, _msg(T, err), "error")
+    elif last.get("status") == "sent":
+        set_flash(r, T["mc_wh_test_ok"], "success")
+    else:
+        set_flash(r, T["mc_wh_test_bad"].replace("{reason}", last.get("error") or T["mc_wh_waiting_h"]), "error")
+    return r
+
+
 @router.post("/{aid}/keys/new")
 async def new_key(aid: str, request: Request):
     """Issue, then REDIRECT (POST -> 303 -> GET): a refresh can never issue a second key."""

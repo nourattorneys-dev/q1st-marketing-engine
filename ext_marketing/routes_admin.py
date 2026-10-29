@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request
 
 import json
 
-from . import db, quotas, security, shapes, validate
+from . import db, quotas, security, shapes, validate, webhooks
 from .auth import ApiError, admin, audit
 from .routes_client import body, ok
 
@@ -100,6 +100,9 @@ async def update_plan(pid: str, req: Request):
             for q in quotas:
                 await con.execute(f"INSERT INTO {S}.plan_quotas (plan_id, metric, limit_value, mode, warn_at) VALUES ($1,$2,$3,$4,$5)",
                                   pid, q["metric"], q["limit"], q["mode"], q["warnAt"])
+    if quotas is not None:                                              # the plan's limits changed: its clients reload their plan
+        for a in await db.pool().fetch(f"SELECT id FROM {S}.accounts WHERE plan_id = $1 AND status <> 'closed'", pid):
+            await webhooks.emit_account(a["id"], "plan.changed", {"planId": pid})
     await audit(ACTOR_OF(req), "plan.update", target=pid, detail={"fields": list(d)})
     return ok(await _plan(pid))
 
@@ -223,6 +226,7 @@ async def account_detail(aid: str, req: Request):
     return ok({"account": shapes.account(dict(a)), "plan": plan,
                "price": a["price_override"] if a["price_override"] is not None else (plan or {}).get("price"),
                "usage": await quotas.effective(aid), "sites": sites,
+               "webhooks": {s["id"]: await webhooks.status(s["id"]) for s in sites},
                "overrides": [{"id": x["id"], "metric": x["metric"], "siteId": x["site_id"], "limit": x["limit_value"], "mode": x["mode"],
                               "warnAt": x["warn_at"], "reason": x["reason"], "setBy": x["set_by"], "at": x["created_at"]} for x in ovr],
                "upgradeRequests": [{"id": x["id"], "siteId": x["site_id"], "metric": x["metric"], "note": x["note"], "by": x["requested_by"],
@@ -258,6 +262,7 @@ async def update_account(aid: str, req: Request):
         raise validate.bad({"status": "active, suspended or closed"})
     if d.get("planId") and not await db.pool().fetchval(f"SELECT 1 FROM {S}.plans WHERE id = $1", d["planId"]):
         raise validate.bad({"planId": "Unknown plan"})
+    old_plan = await db.pool().fetchval(f"SELECT plan_id FROM {S}.accounts WHERE id = $1", aid)
     row = await db.pool().fetchrow(
         f"""UPDATE {S}.accounts SET name = coalesce($3, name), plan_id = coalesce($4, plan_id), status = coalesce($5, status),
             price_override = CASE WHEN $6::boolean THEN $7 ELSE price_override END, notes = coalesce($8, notes),
@@ -266,6 +271,8 @@ async def update_account(aid: str, req: Request):
         "priceOverride" in d, d.get("priceOverride"), d.get("notes"))
     if not row:
         raise ApiError(409, "version_conflict", "Account not found or changed meanwhile. Reload.")
+    if d.get("planId") and d["planId"] != old_plan:
+        await webhooks.emit_account(aid, "plan.changed", {"planId": d["planId"]})
     await audit(ACTOR_OF(req), "account.update", account_id=aid, detail={"fields": list(d)})
     return ok(shapes.account(dict(row)))
 
@@ -464,3 +471,16 @@ async def delete_key(aid: str, kid: str, req: Request):
     await db.pool().execute(f"DELETE FROM {S}.api_keys WHERE id = $1 AND account_id = $2 AND revoked_at IS NOT NULL", kid, aid)
     await audit(ACTOR_OF(req), "apikey.delete", account_id=aid, site_id=row["site_id"], target=kid, detail={"prefix": row["key_prefix"]})
     return ok({"deleted": True})
+
+
+# ---------------------------------------------------------------- webhooks (set by each site's app; we watch and test them)
+@r.post("/sites/{sid}/webhook/test")
+async def webhook_test(sid: str, req: Request):
+    """Sends one signed test event to the site's webhook now and answers what happened."""
+    admin(req)
+    if not await webhooks.row(sid):
+        raise ApiError(404, "not_found", "This site has no webhook set.")
+    await webhooks.emit(sid, "webhook.test", {"note": "A test sent from the Quantum1st team."}, always=True)
+    await webhooks.deliver_due()
+    await audit(ACTOR_OF(req), "webhook.test", site_id=sid)
+    return ok(await webhooks.status(sid))

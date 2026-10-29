@@ -49,6 +49,7 @@ async def _run(job: dict) -> None:
     try:
         result = await HANDLERS[job["kind"]](job)
         await db.pool().execute(f"UPDATE {S}.jobs SET status='done', progress=1, result=$2, finished_at=now() WHERE id=$1", job["id"], result or {})
+        await _finished(job, "done", result=result or {})
     except Exception as e:                                              # noqa: BLE001
         if isinstance(e, Final):                                        # an expected outcome (bad input, nothing to do), not a crash
             log.info("job %s (%s) ended: %s", job["id"], job["kind"], e.message)
@@ -58,8 +59,16 @@ async def _run(job: dict) -> None:
         await db.pool().execute(
             f"UPDATE {S}.jobs SET status=$2, error=$3, finished_at=CASE WHEN $2='failed' THEN now() END WHERE id=$1",
             job["id"], "queued" if again else "failed", (getattr(e, "message", None) or f"{type(e).__name__}: {e}")[:500])
+        if not again:
+            await _finished(job, "failed", error=(getattr(e, "message", None) or "The job failed.")[:500])
     finally:
         _running.discard(job["id"])
+
+
+async def _finished(job: dict, status: str, *, result: dict | None = None, error: str | None = None) -> None:
+    from . import webhooks
+    await webhooks.emit(job["site_id"], "job.finished", {"jobId": job["id"], "kind": job["kind"], "status": status,
+                                                        **({"result": result} if result is not None else {}), **({"error": error} if error else {})})
 
 
 class Final(Exception):
@@ -86,6 +95,9 @@ async def loop() -> None:
             await _recover()
             from . import idempotency
             await idempotency.purge()
+            from . import webhooks
+            await webhooks.purge()
+            webhooks.kick()
             while len(_running) < int(s.get("queue_max_concurrent") or 1):
                 job = await _claim()
                 if not job:

@@ -3,7 +3,7 @@ topic suggestions, and the exact JSON shape the site's app receives."""
 from __future__ import annotations
 import logging
 
-from . import db, jobs, llm, locks, media, meter, mirror, profile, quotas, rules as R, security, website, writer
+from . import db, jobs, llm, locks, media, meter, mirror, profile, quotas, rules as R, security, webhooks, website, writer
 
 S = db.SCHEMA
 log = logging.getLogger("ext_marketing.posts")
@@ -161,8 +161,10 @@ async def draft(job: dict) -> dict:
         raise
     except Exception as e:                                              # noqa: BLE001
         if job["attempts"] >= int((await db.settings(["job_max_attempts"])).get("job_max_attempts") or 1):
-            await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE id=$1 AND status='drafting'",
-                                    job["payload"]["postId"], f"Drafting failed ({type(e).__name__}). Ask for a new draft, or tell support if it repeats.")
+            msg = f"Drafting failed ({type(e).__name__}). Ask for a new draft, or tell support if it repeats."
+            if await db.pool().fetchval(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE id=$1 AND status='drafting' RETURNING id",
+                                        job["payload"]["postId"], msg):
+                await webhooks.emit(job["site_id"], "post.failed", {"postId": job["payload"]["postId"], "error": msg})
             await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE source_id=$1 AND status='drafting' AND content IS NULL",
                                     job["payload"]["postId"], "The version this is translated from could not be drafted. Ask for changes on it, then here.")
         raise
@@ -217,6 +219,7 @@ async def _draft(job: dict) -> dict:
                        tokens_in=tin, tokens_out=tout, job_id=job["id"])
     if img and not p["image"]:
         await meter.record(site["account_id"], site["id"], "photos", 1, job_id=job["id"])
+    await webhooks.emit(site["id"], "post.drafted", {"postId": pid, "status": "pending"})
     for t in await db.pool().fetch(f"SELECT id FROM {S}.posts WHERE source_id = $1 AND status = 'drafting'", pid):
         await jobs.enqueue(site["account_id"], site["id"], "post.twin", {"postId": t["id"]})
     await refresh_twins(pid)
@@ -235,8 +238,10 @@ async def twin(job: dict) -> dict:
         raise
     except Exception as e:                                              # noqa: BLE001
         if job["attempts"] >= int((await db.settings(["job_max_attempts"])).get("job_max_attempts") or 1):
-            await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE id=$1 AND status='drafting'",
-                                    job["payload"]["postId"], f"Translating failed ({type(e).__name__}). Ask for changes to try again, or tell support if it repeats.")
+            msg = f"Translating failed ({type(e).__name__}). Ask for changes to try again, or tell support if it repeats."
+            if await db.pool().fetchval(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE id=$1 AND status='drafting' RETURNING id",
+                                        job["payload"]["postId"], msg):
+                await webhooks.emit(job["site_id"], "post.failed", {"postId": job["payload"]["postId"], "error": msg})
         raise
 
 
@@ -269,6 +274,7 @@ async def _twin(job: dict) -> dict:
         out["hashtags"], img, src["sources"] or [], findings, seo, out["source_hash"], src["photo_idea"])
     await meter.record(site["account_id"], site["id"], "articles", 0 if (p["review_note"] or p["content"]) else 1, tokens_in=out["tokens"][0],
                        tokens_out=out["tokens"][1], job_id=job["id"])
+    await webhooks.emit(site["id"], "post.drafted", {"postId": pid, "status": "pending"})
     return {"postId": pid, "status": "pending", "pieces": len(mirror.segments(out["content"])),
             "sourcePieces": len(mirror.segments(src["content"])), "critical": sum(1 for f in findings if f["level"] == "critical")}
 
@@ -295,16 +301,19 @@ async def suggest(job: dict) -> dict:
                                     "\n".join(f"- {k['phrase']} [{k['language']}]" for k in kws[:200]) + f"\n\nDONE:\n{chr(10).join(done[:300]) or '(none)'}"}],
         max_tokens=int(s["topics_max_tokens"]))
     items = llm.json_from(raw).get("topics") or []
-    added = 0
+    added, new_ids = 0, []
     seen = {t.strip().lower() for t in done if t}
     for it in items:
         if not isinstance(it, dict) or not isinstance(it.get("title"), str) or it["title"].strip().lower() in seen:
             continue
         lg = it.get("language") if it.get("language") in site["languages"] else site["default_language"]
         kd = it.get("kind") if it.get("kind") in ("blog", "social") else "blog"
+        sid = security.new_id("sg"); new_ids.append(sid)
         await db.pool().execute(f"INSERT INTO {S}.suggestions (id, site_id, title, kind, language, keywords, why) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                                security.new_id("sg"), site["id"], it["title"].strip()[:300], kd, lg,
+                                sid, site["id"], it["title"].strip()[:300], kd, lg,
                                 [k for k in (it.get("keywords") or []) if isinstance(k, str)][:8], (it.get("why") or "")[:300])
         seen.add(it["title"].strip().lower()); added += 1
     await meter.record(site["account_id"], site["id"], "topicRuns", 1, tokens_in=a, tokens_out=b, job_id=job["id"])
+    if new_ids:
+        await webhooks.emit(site["id"], "suggestions.created", {"ids": new_ids})
     return {"added": added}

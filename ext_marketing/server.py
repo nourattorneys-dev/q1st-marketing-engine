@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 import asyncio
 
-from . import db, jobs, keywords, posts, routes_admin, routes_client, routes_content, routes_account, routes_posts, routes_publish, routes_website, publishing  # noqa: F401 (keywords/posts register their jobs)
+from . import db, jobs, keywords, posts, routes_admin, routes_client, routes_content, routes_account, routes_posts, routes_publish, routes_website, routes_webhook, publishing  # noqa: F401 (keywords/posts register their jobs)
 from .auth import ApiError
 from . import idempotency, website
 
@@ -51,6 +51,7 @@ app.include_router(routes_content.r)
 app.include_router(routes_posts.r)
 app.include_router(routes_publish.r)
 app.include_router(routes_account.r)
+app.include_router(routes_webhook.r)
 
 
 def err(status: int, code: str, message: str, **extra):
