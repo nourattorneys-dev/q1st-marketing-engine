@@ -24,6 +24,7 @@
     .mck-warn svg{flex:none;color:var(--warn);margin-top:1px}
     .mck-key{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:10px;background:var(--bg-2);overflow:hidden}
     .mck-key input{flex:1;min-width:0;border:0;background:transparent;color:inherit;padding:12px 14px;font:500 13.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.2px;outline:none}
+    .wh-url{min-width:220px;max-width:360px}.wh-url code{overflow-wrap:anywhere}.wh-act{white-space:nowrap}
     .wh-sub>td{padding-top:0;border-top:0}.wh-d summary{cursor:pointer;font-size:13px;color:var(--mut,inherit);padding:4px 0;list-style-position:inside}
     .wh-d .wh-in{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows .25s ease,opacity .25s ease}.wh-d .wh-in>table{min-height:0;overflow:hidden}
     .wh-d[open] .wh-in{grid-template-rows:1fr;opacity:1}@starting-style{.wh-d[open] .wh-in{grid-template-rows:0fr;opacity:0}}
@@ -97,10 +98,10 @@
   <div class="n-card" id="webhooks"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_wh }}{{ hint(T.mc_wh_h) }}</h2></div></div>
     {% if hooks %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_key_site }}</th><th>{{ T.mc_wh_url }}</th><th>{{ T.mc_wh_status }}</th><th>{{ T.mc_wh_last }}</th><th>{{ T.mc_wh_waiting }}</th><th></th></tr></thead>
       {% for sid, w in hooks %}<tr><td>{{ site_name.get(sid, sid) }}<div class="n-mut n-sm">{{ T.mc_wh_events }}: {{ w.events | length }}</div></td>
-        <td><code class="n-code" dir="ltr">{{ w.url }}</code>{% if w.lastError and w.status == 'failing' %}<div class="n-mut n-sm">{{ w.lastError }}</div>{% endif %}</td>
+        <td class="wh-url"><code class="n-code" dir="ltr">{{ w.url }}</code>{% if w.lastError and w.status == 'failing' %}<div class="n-mut n-sm">{{ w.lastError }}</div>{% endif %}</td>
         <td>{{ badge(T['mc_wh_st_' ~ w.status], 'ok' if w.status == 'ok' else ('warn' if w.status == 'failing' else 'n')) }}</td>
         <td class="mut num">{{ when(w.lastDeliveryAt) if w.lastDeliveryAt else '—' }}</td><td class="num">{{ w.waiting }}</td>
-        <td><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ sid }}/webhook-test"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s">{{ T.mc_wh_test }}</button></form></td></tr>
+        <td class="wh-act"><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ sid }}/webhook-test"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s">{{ T.mc_wh_test }}</button></form></td></tr>
       {% if w.recent %}<tr class="wh-sub"><td colspan="6"><details class="wh-d"><summary>{{ T.mc_wh_recent }} ({{ w.recent | length }})</summary><div class="wh-in"><table class="n-t">
         {% for x in w.recent %}<tr><td><code class="n-code" dir="ltr">{{ x.event }}</code></td><td>{{ badge(T['mc_wh_d_' ~ x.status], 'ok' if x.status == 'sent' else ('warn' if x.status in ('pending', 'failed') else 'n'), True) }}</td>
           <td class="n-sm">{{ T.mc_wh_tries }}: {{ x.attempts }}{% if x.code %} · {{ x.code }}{% endif %}{% if x.error and x.status != 'sent' %}<div class="n-mut">{{ x.error }}</div>{% endif %}</td><td class="mut num">{{ when(x.at) }}</td></tr>{% endfor %}

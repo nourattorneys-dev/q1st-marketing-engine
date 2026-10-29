@@ -38,7 +38,7 @@ async def _api(user, method, path, json=None):
     return (_dates(d.get("data")), None) if d.get("ok") else (None, d.get("error") or {"code": "error", "message": "HTTP %s" % r.status_code})
 
 
-_DATES = {"createdAt", "updatedAt", "lastUsedAt", "revokedAt", "at", "start", "end", "handledAt"}
+_DATES = {"at", "start", "end"}                                         # plus every key ending in "At" (lastDeliveryAt, sentAt, ...)
 
 
 def _dates(o):
@@ -49,7 +49,7 @@ def _dates(o):
     if isinstance(o, dict):
         out = {}
         for k, v in o.items():
-            if k in _DATES and isinstance(v, str):
+            if (k in _DATES or k.endswith("At")) and isinstance(v, str):
                 try:
                     v = datetime.fromisoformat(v)
                 except ValueError:
