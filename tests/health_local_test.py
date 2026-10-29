@@ -74,9 +74,11 @@ _real = netguard.check
 async def _local(url, require_https=True):                             # the test servers are on this machine
     return url if urlparse(url).hostname == "127.0.0.1" else await _real(url, require_https)
 netguard.check = _local
-CALLS = []
+CALLS, MODE = [], {"never": False}
 async def fake_chat(messages, *, max_tokens, temperature=0.3):
     CALLS.append(messages)
+    if MODE["never"]:                                                  # a model that keeps missing the band, by a little
+        return json.dumps({"value": "Team " * 13}), 10, 10
     if len(CALLS) == 1:                                                # first answer too long: the measure must catch it
         return json.dumps({"value": "x" * 400}), 100, 50
     return json.dumps({"value": "Employment, company and contract law services for businesses in Dubai, from advice to court."}), 100, 30
@@ -147,6 +149,17 @@ async def main():
     ok("T14 the AI tokens of the proposals are metered (no extra scan counted)", tok == 280 and
        await p.fetchval(f"SELECT sum(qty) FROM {S}.usage_events WHERE site_id = $1 AND metric = 'siteScans'", site["id"]) == 1, tok)
 
+    MODE["never"] = True; n0 = len(CALLS)
+    dt = next(f for f in fs["data"] if f["code"] == "duplicate_title" and f["url"].endswith("/team"))
+    await p.execute(f"UPDATE {S}.site_findings SET status='prepared', fix='Proposed: old', fix_data='{{\"field\":\"metaTitle\",\"value\":\"old\"}}' WHERE id=$1", dt["id"])
+    j = await run_job((await c.post(f"{A}/site/fixes", headers=K, json={"ids": [dt["id"]]})).json()["data"]["jobId"])
+    row2 = await p.fetchrow(f"SELECT * FROM {S}.site_findings WHERE id = $1", dt["id"])
+    tries = int(await p.fetchval(f"SELECT value::text FROM {S}.settings WHERE key = 'health_fix_tries'"))
+    ok("T14b a proposal that never fits is NOT prepared (an older proposal is dropped too); the reason names the closest one; tries = setting",
+       j["result"]["failed"] == [dt["id"]] and row2["status"] == "open" and row2["fix_data"] is None and not row2["fix"].startswith("Proposed") and "closest was 64 characters" in (row2["error"] or "") and
+       len(CALLS) - n0 == tries, (j["result"], row2["status"], row2["error"], len(CALLS) - n0))
+    ok("T14c each retry tells the model how far off it was", "4 too many" in CALLS[-1][-1]["content"], CALLS[-1][-1]["content"])
+    MODE["never"] = False
     r = (await c.post(f"{A}/site/findings/bulk", headers=K, json={"action": "apply", "ids": [md["id"], h1["id"], "sf_nope"]})).json()["data"]
     ok("T15 apply: the prepared one is written; the others fail with a reason each", r["done"] == [md["id"]] and
        [(x["id"], x["code"]) for x in r["failed"]] == [(h1["id"], "not_prepared"), ("sf_nope", "not_found")], r)

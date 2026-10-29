@@ -161,7 +161,8 @@ async def scan(job: dict) -> dict:
 
 
 async def _write_fix(site: dict, f: dict, rules: dict, page: dict, s: dict) -> tuple[str | None, int, int, str | None]:
-    """(value, tokens in, tokens out, note). The value is measured against the band; one more try when it is outside."""
+    """(value, tokens in, tokens out, note). The value is measured against the band and asked again (health_fix_tries in all)
+    while it is outside. None when no try fits: a text outside the band is never prepared; the note carries the closest one."""
     field = WRITES[f["code"]]
     band = rules.get(field) or []
     others = (f["detail"] or {}).get("samePages") or []
@@ -175,7 +176,7 @@ async def _write_fix(site: dict, f: dict, rules: dict, page: dict, s: dict) -> t
                                        f"MAIN HEADING: {page.get('h1') or '(none)'}\nPAGE TEXT:\n{(page.get('text') or '')[:4000]}"}]
     tin = tout = 0
     best, note = None, None
-    for _ in range(2):
+    for _ in range(max(1, int(s.get("health_fix_tries") or 1))):
         raw, a, b = await llm.chat(ask, max_tokens=int(s["health_fix_max_tokens"]))
         tin += a; tout += b
         v = " ".join(str(llm.json_from(raw).get("value") or "").split())
@@ -184,16 +185,19 @@ async def _write_fix(site: dict, f: dict, rules: dict, page: dict, s: dict) -> t
         if v and _band(len(v), band):
             return v, tin, tout, None
         ask += [{"role": "assistant", "content": raw},
-                {"role": "user", "content": f"That is {len(v)} characters; it must be {band[0]}–{band[1]}. Write it again."}]
+                {"role": "user", "content": f"That is {len(v)} characters, {len(v) - band[1]} too many" if len(v) > band[1] else
+                 f"That is {len(v)} characters, {band[0] - len(v)} too few" if v else "There was no value"}]
+        ask[-1]["content"] += f"; it must be {band[0]}–{band[1]} characters. Write it again."
     if best:
-        note = f"The proposal is {len(best)} characters; the band is {band[0]}–{band[1]}. Edit it before applying."
-    return best, tin, tout, note
+        note = f"No proposal fitted the band {band[0]}–{band[1]}; the closest was {len(best)} characters: {best}"
+    return None, tin, tout, note
 
 
 @jobs.handler("site.fixes")
 async def prepare(job: dict) -> dict:
     site = dict(await db.pool().fetchrow(f"SELECT * FROM {S}.sites WHERE id = $1", job["site_id"]))
-    s = await db.settings(["health_fix_max_tokens"])
+    s = await db.settings(["health_fix_max_tokens", "health_fix_tries", "health_checks"])
+    checks = s.get("health_checks") or {}
     rules, _ = await R.for_site(site["id"])
     rows = [dict(x) for x in await db.pool().fetch(
         f"SELECT * FROM {S}.site_findings WHERE site_id = $1 AND id = ANY($2) AND status IN ('open','prepared')", site["id"], job["payload"]["ids"])]
@@ -216,9 +220,10 @@ async def prepare(job: dict) -> dict:
             log.exception("health fix %s", f["id"])
             v, a, b, note = None, 0, 0, f"The proposal could not be written ({type(e).__name__}). Try again."
         tin += a; tout += b
-        if not v:
+        if not v:                                                       # no fitting proposal: an earlier one is not kept either
             failed.append(f["id"])
-            await db.pool().execute(f"UPDATE {S}.site_findings SET error = $2, updated_at = now() WHERE id = $1", f["id"], note)
+            await db.pool().execute(f"""UPDATE {S}.site_findings SET error = $2, status = 'open', fix_data = NULL, fix = $3, updated_at = now()
+                                       WHERE id = $1""", f["id"], note, _advice(checks, f["code"], site["default_language"]))
             continue
         field = WRITES[f["code"]]
         await db.pool().execute(
