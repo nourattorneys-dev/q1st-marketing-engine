@@ -21,7 +21,7 @@ FL=$(as "$U/site/findings?pageSize=100")
 check "T3 findings in the spec shape, known levels and statuses" "$(echo "$FL" | j "all({'id','url','level','issue','fix','status'} <= set(f) and f['level'] in ('critical','warn','info') and f['status'] in ('open','prepared','applied','dismissed') for f in d['data'])")" "True"
 check "T3b every finding is on the site's own address" "$(echo "$FL" | j "all('fakhernco.com' in f['url'] for f in d['data'])")" "True"
 echo "      by check: $(echo "$FL" | j "__import__('collections').Counter(f['code'] for f in d['data']).most_common()")"
-IDS1=$(echo "$FL" | j "sorted(f['id'] for f in d['data'] if f['status']=='open')")
+IDS1=$(as "$U/site/findings?status=open&pageSize=100" | j "sorted(f['id'] for f in d['data'])")   # the same filter and page both times
 JR2=$(wait_job $(as -X POST $U/site/scan -d '{}' | j "d['data']['jobId']"))
 IDS2=$(as "$U/site/findings?status=open&pageSize=100" | j "sorted(f['id'] for f in d['data'])")
 check "T4 a second scan of the unchanged site keeps the same findings (same ids)" "$IDS2" "$IDS1"
