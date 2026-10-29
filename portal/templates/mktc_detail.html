@@ -52,7 +52,7 @@
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("report") }}<div><h2>{{ T.mc_usage }}{{ hint(T.mc_usage_h) }}</h2></div></div>
     <div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_metric }}</th><th>{{ T.mc_limit }}</th><th style="width:40%"></th><th>{{ T.mc_mode }}</th></tr></thead>
       {% for q in (d.usage or {}).quotas or [] %}{% set pct = ((q.used / q.limit * 100) if q.limit else 0) %}<tr>
-        <td>{{ q.label }}</td><td class="num">{{ q.used }} / {{ q.limit if q.limit is not none else T.mc_unlimited }}{% if q.source %} <span class="n-mut n-sm">({{ T['mc_from_' ~ q.source] }})</span>{% endif %}</td>
+        <td>{{ metrics | selectattr("key", "equalto", q.metric) | map(attribute="label") | first | default(q.label) }}</td><td class="num">{{ q.used }} / {{ q.limit if q.limit is not none else T.mc_unlimited }}{% if q.source %} <span class="n-mut n-sm">({{ T['mc_from_' ~ q.source] }})</span>{% endif %}</td>
         <td>{% if q.limit %}<div style="height:8px;border-radius:4px;background:var(--line);overflow:hidden"><div style="height:100%;width:{{ [pct, 100] | min }}%;background:var({{ '--danger' if pct >= 100 else ('--warn' if q.warnAt and pct >= q.warnAt * 100 else '--ok') }})"></div></div>{% endif %}</td>
         <td>{{ (T.mc_mode_hard if q.mode == 'hard' else T.mc_mode_soft) if q.mode else '—' }}</td></tr>{% endfor %}
     </table></div></div>
@@ -77,14 +77,14 @@
 
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_sites }}</h2></div></div>
     {% if d.sites %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_site_name }}</th><th>{{ T.mc_category }}</th><th>{{ T.mc_languages }}</th><th>{{ T.mc_conn }}</th><th></th></tr></thead>
-      {% for s in d.sites %}<tr><td>{{ s.name }}{% if live_keys.get(s.id, 0) > 1 %} {{ badge(T.mc_keys_many | replace("{n}", live_keys.get(s.id) | string), "warn", True, T.mc_keys_many_h) }}{% endif %}<div class="n-mut n-sm" dir="ltr">{{ s.url }} · <code>{{ s.id }}</code></div></td><td>{{ s.category or '—' }}</td><td>{{ s.languages | join(', ') }}</td>
+      {% for s in d.sites %}<tr><td>{{ s.name }}{% if live_keys.get(s.id, 0) > 1 %} {{ badge(T.mc_keys_many | replace("{n}", live_keys.get(s.id) | string), "warn", True, T.mc_keys_many_h) }}{% endif %}<div class="n-mut n-sm" dir="ltr">{{ s.url }} · <code>{{ s.id }}</code></div></td><td>{{ cats.get(s.category, s.category) if s.category else '—' }}</td><td>{{ s.languages | join(', ') }}</td>
         <td>{% for t, c in s.connections.items() %}{% set st = c.status if c is mapping else c %}{{ badge(((c.type or t) if c is mapping else t), 'ok' if st == 'ok' else ('warn' if st in ('expiring', 'error') else 'n'), True) }} {% endfor %}</td>
         <td><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ s.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s d" data-confirm="{{ T.mc_site_delete_q }}" data-confirm-kind="danger">{{ T.mc_site_delete }}</button></form></td></tr>{% endfor %}
     </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_no_sites }}</div>{% endif %}
     <form method="post" action="/marketing-clients/{{ a.id }}/sites/new" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="n-field"><label for="st-name">{{ T.mc_site_name }}</label><input class="n-in" id="st-name" name="name" required style="width:180px"></div>
       <div class="n-field"><label for="st-url">{{ T.mc_site_url }}</label><input class="n-in" id="st-url" name="url" placeholder="www.example.com" required dir="ltr" autocomplete="off" style="width:220px"></div>
-      <div class="n-field"><label for="st-cat">{{ T.mc_category }}{{ hint(T.mc_category_h) }}</label><select class="n-in" id="st-cat" name="category" required><option value="">{{ T.mc_category_pick }}</option>{% for c in meta.categories or [] %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+      <div class="n-field"><label for="st-cat">{{ T.mc_category }}{{ hint(T.mc_category_h) }}</label><select class="n-in" id="st-cat" name="category" required><option value="">{{ T.mc_category_pick }}</option>{% for c in meta.categories or [] %}<option value="{{ c }}">{{ cats.get(c, c) }}</option>{% endfor %}</select></div>
       <div class="n-field"><label for="st-tz">{{ T.mc_timezone }}</label><input class="n-in" id="st-tz" name="timezone" value="Asia/Dubai" required dir="ltr" style="width:150px"></div>
       <div class="n-field"><label>{{ T.mc_languages }}</label><div class="n-row" style="gap:10px">{% for l in meta.languages or [] %}<label class="n-check"><input type="checkbox" name="languages" value="{{ l }}" {% if loop.first %}checked{% endif %}> {{ l }}</label>{% endfor %}</div></div>
       <div class="n-field"><label for="st-dl">{{ T.mc_default_lang }}</label><select class="n-in" id="st-dl" name="default_language">{% for l in meta.languages or [] %}<option value="{{ l }}">{{ l }}</option>{% endfor %}</select></div>

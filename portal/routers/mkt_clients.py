@@ -114,10 +114,18 @@ async def new_client(request: Request):
 
 
 # ------------------------------------------------------------------------------ plans
-async def _metrics(user):
-    """[{key, label, unit}] from the admin API (the site API's /meta lists names only)."""
+async def _metrics(user, request=None):
+    """[{key, label, unit}] from the admin API, labelled in the page's language (falls back to English)."""
     m, _ = await _api(user, "GET", "/admin/v1/metrics")
-    return m or []
+    ar = request is not None and resolve_lang(request, user) == "ar"
+    return [{**x, "label": (x.get("labelAr") if ar else None) or x["label"]} for x in m or []]
+
+
+async def _categories(request, user):
+    """{value: name} for site categories in the page's language (falls back to the value)."""
+    c, _ = await _api(user, "GET", "/admin/v1/categories")
+    lang = resolve_lang(request, user)
+    return {x["value"]: (x.get("names") or {}).get(lang) or x["value"] for x in c or []}
 
 
 def _quotas_from_form(f, metrics):
@@ -136,7 +144,7 @@ async def plans(request: Request):
     if deny:
         return deny
     rows, err = await _api(user, "GET", "/admin/v1/plans")
-    return templates.TemplateResponse(request, "mktc_plans.html", {"user": user, "rows": rows or [], "metrics": await _metrics(user),
+    return templates.TemplateResponse(request, "mktc_plans.html", {"user": user, "rows": rows or [], "metrics": await _metrics(user, request),
                                                                    "down": bool(err)})
 
 
@@ -175,7 +183,7 @@ async def revenue(request: Request, month: str = ""):
     q = f"?month={month}" if _re.fullmatch(r"\d{4}-\d{2}", month or "") else ""
     d, err = await _api(user, "GET", "/admin/v1/revenue" + q)
     ups, _ = await _api(user, "GET", "/admin/v1/upgrade-requests?status=open")
-    labels = {m["key"]: m["label"] for m in await _metrics(user)}
+    labels = {m["key"]: m["label"] for m in await _metrics(user, request)}
     return templates.TemplateResponse(request, "mktc_revenue.html", {"user": user, "d": d or {}, "ups": ups or [], "labels": labels,
                                                                      "down": bool(err) and (err or {}).get("code") == "down", "err": err})
 
@@ -212,7 +220,7 @@ async def _detail(request, user, aid, new_key=None):
     plans, _ = await _api(user, "GET", "/admin/v1/plans")
     meta, _ = await _api(user, "GET", "/api/v1/meta")
     return templates.TemplateResponse(request, "mktc_detail.html", {
-        "user": user, "d": d or {}, "plans": plans or [], "meta": meta or {}, "metrics": await _metrics(user), "new_key": new_key,
+        "user": user, "d": d or {}, "plans": plans or [], "meta": meta or {}, "metrics": await _metrics(user, request), "cats": await _categories(request, user), "new_key": new_key,
         "down": bool(err)})
 
 

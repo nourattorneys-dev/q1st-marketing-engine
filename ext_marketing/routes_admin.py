@@ -109,7 +109,17 @@ async def update_plan(pid: str, req: Request):
 async def metrics(req: Request):
     """What can be metered, with labels and units (the site API's /meta lists only the names)."""
     admin(req)
-    return ok([dict(x) for x in await db.pool().fetch(f"SELECT key, label, unit FROM {S}.metrics WHERE active ORDER BY key")])
+    return ok([{"key": x["key"], "label": x["label"], "labelAr": x["label_ar"], "unit": x["unit"]}
+               for x in await db.pool().fetch(f"SELECT key, label, label_ar, unit FROM {S}.metrics WHERE active ORDER BY key")])
+
+
+@r.get("/categories")
+async def categories(req: Request):
+    """Site categories with their names in other languages (the site API's /meta lists the categories only)."""
+    admin(req)
+    s = await db.settings(["site_categories", "site_category_names"])
+    names = s.get("site_category_names") or {}
+    return ok([{"value": c, "names": names.get(c) or {}} for c in s.get("site_categories") or []])
 
 
 # ---------------------------------------------------------------- upgrade requests (sent from the clients' apps)
