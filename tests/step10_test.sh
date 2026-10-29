@@ -25,7 +25,7 @@ IDS1=$(echo "$FL" | j "sorted(f['id'] for f in d['data'] if f['status']=='open')
 JR2=$(wait_job $(as -X POST $U/site/scan -d '{}' | j "d['data']['jobId']"))
 IDS2=$(as "$U/site/findings?status=open&pageSize=100" | j "sorted(f['id'] for f in d['data'])")
 check "T4 a second scan of the unchanged site keeps the same findings (same ids)" "$IDS2" "$IDS1"
-PICK=$(echo "$FL" | j "[f['id'] for f in d['data'] if f['code'] in ('missing_description','description_length','title_length','missing_title','duplicate_title','duplicate_description') and f['status'] in ('open','prepared')][:2]")
+PICK=$(echo "$FL" | j "[f['id'] for f in sorted(d['data'], key=lambda f: __import__('urllib.parse').parse.urlparse(f['url']).path.strip('/') == '') if f['code'] in ('missing_description','description_length','title_length','missing_title','duplicate_title','duplicate_description') and f['status'] in ('open','prepared')][:2]")   # inner pages first: the home page's SEO text lives in the SEO plugin's settings
 if [ "$PICK" != "[]" ]; then
   PJ=$(echo "$PICK" | tr "'" '"'); N=$(echo "$PJ" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
   FJ=$(wait_job $(as -X POST $U/site/fixes -d "{\"ids\": $PJ}" | j "d['data']['jobId']"))
@@ -47,7 +47,7 @@ fi
 check "T7 an unknown action is refused" "$(as -X POST $U/site/findings/bulk -d '{"action":"burn","ids":["x"]}' | j "list(d['error']['fields'])")" "['action']"
 if [ "${APPLY:-0}" == "1" ]; then
   : "${WP_USER:?set WP_USER}" "${WP_PASS:?set WP_PASS}"
-  FID=$(as "$U/site/findings?status=prepared&pageSize=100" | j "d['data'][0]['id']")
+  FID=$(as "$U/site/findings?status=prepared&pageSize=100" | j "[f['id'] for f in d['data'] if __import__('urllib.parse').parse.urlparse(f['url']).path.strip('/')][0]")
   check "T8 APPLY: one prepared fix is written to the live page" "$(as -X POST $U/site/findings/bulk -d "{\"action\":\"apply\",\"ids\":[\"$FID\"]}" | j "d['data']['done']")" "['$FID']"
   OUT=$($PSQL "select fix_data::text from ext_marketing.site_findings where id='$FID'" | python3 -c "
 import sys, json, os, base64, urllib.request
