@@ -9,7 +9,8 @@ check() { if [ "$2" == "$3" ]; then echo "PASS  $1"; P=$((P+1)); else echo "FAIL
 uid() { cat /proc/sys/kernel/random/uuid; }
 as() { curl -s -H "X-Api-Key: $KEY" -H "X-Acting-User: ahmed" -H "Idempotency-Key: $(uid)" -H 'Content-Type: application/json' "$@"; }
 U=$API/api/v1/sites/$SITE
-wait_job() { for i in $(seq 1 120); do S=$(as $API/api/v1/jobs/$1 | j "d['data']['status']"); [ "$S" == "done" -o "$S" == "failed" ] && break; sleep 3; done; as $API/api/v1/jobs/$1; }
+WAIT_MIN=${WAIT_MIN:-60}                                                # a full scan of a large site takes many minutes
+wait_job() { local end=$(( $(date +%s) + WAIT_MIN * 60 )); while [ $(date +%s) -lt $end ]; do S=$(as $API/api/v1/jobs/$1 | j "d['data']['status']"); [ "$S" == "done" -o "$S" == "failed" ] && break; sleep 10; done; as $API/api/v1/jobs/$1; }
 
 JID=$(as -X POST $U/site/scan -d '{}' | j "d['data']['jobId']")
 check "T1 a scan starts" "$(echo $JID | cut -c1-2)" "j_"
@@ -22,7 +23,9 @@ check "T3 findings in the spec shape, known levels and statuses" "$(echo "$FL" |
 check "T3b every finding is on the site's own address" "$(echo "$FL" | j "all('fakhernco.com' in f['url'] for f in d['data'])")" "True"
 echo "      by check: $(echo "$FL" | j "__import__('collections').Counter(f['code'] for f in d['data']).most_common()")"
 IDS1=$(as "$U/site/findings?status=open&pageSize=100" | j "sorted(f['id'] for f in d['data'])")   # the same filter and page both times
-JR2=$(wait_job $(as -X POST $U/site/scan -d '{}' | j "d['data']['jobId']"))
+J2=$(as -X POST $U/site/scan -d '{}' | j "d['data']['jobId']")
+check "T4a the second scan is a new job (the first one is finished)" "$([ "$J2" != "$JID" ] && echo new)" "new"
+JR2=$(wait_job $J2)
 IDS2=$(as "$U/site/findings?status=open&pageSize=100" | j "sorted(f['id'] for f in d['data'])")
 check "T4 a second scan of the unchanged site keeps the same findings (same ids)" "$IDS2" "$IDS1"
 PICK=$(echo "$FL" | j "[f['id'] for f in sorted(d['data'], key=lambda f: __import__('urllib.parse').parse.urlparse(f['url']).path.strip('/') == '') if f['code'] in ('missing_description','description_length','title_length','missing_title','duplicate_title','duplicate_description') and f['status'] in ('open','prepared')][:2]")   # inner pages first: the home page's SEO text lives in the SEO plugin's settings
