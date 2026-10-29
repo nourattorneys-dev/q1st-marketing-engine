@@ -160,8 +160,8 @@ async def revenue(req: Request, month: str = ""):
                    p.billing_period FROM {S}.accounts a LEFT JOIN {S}.plans p ON p.id = a.plan_id WHERE a.status <> 'closed' ORDER BY a.name""", s.get("currency"))
     use = await p.fetch(
         f"""SELECT account_id, metric, sum(CASE WHEN metric = 'aiTokens' THEN tokens_in + tokens_out ELSE qty END) AS used,
-                   sum(CASE WHEN over_quota THEN qty ELSE 0 END) AS over, sum(coalesce(cost_estimate, 0)) AS cost
-            FROM {S}.usage_events WHERE to_char(at AT TIME ZONE $1, 'YYYY-MM') = $2 GROUP BY 1, 2""", tz, month)
+                   sum(CASE WHEN over_quota THEN qty ELSE 0 END) AS over, sum(coalesce(cost_estimate, (tokens_in + tokens_out) * $3::numeric / 1000, 0)) AS cost
+            FROM {S}.usage_events WHERE to_char(at AT TIME ZONE $1, 'YYYY-MM') = $2 GROUP BY 1, 2""", tz, month, s.get("cost_per_1k_tokens"))
     by: dict = {}
     for u in use:
         by.setdefault(u["account_id"], {})[u["metric"]] = u
