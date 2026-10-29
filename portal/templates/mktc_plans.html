@@ -14,7 +14,7 @@
   <div class="n-ph"><div><h1>{{ T.mc_plans_title }}</h1><p>{{ T.mc_plans_sub }}</p></div><a class="n-btn s" href="/marketing-clients/">{{ T.mc_back }}</a></div>
   {% if down %}<div class="n-card"><div class="n-empty"><p>{{ T.mc_err_down }}</p></div></div>{% endif %}
   {% for p in rows %}
-  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("finance") }}<div><h2>{{ p.name }}</h2><div class="n-card-d">{% if p.price is not none %}{{ p.price }} {{ p.currency or '' }} / {{ p.billingPeriod }}{% endif %}</div></div>{{ badge(T.mc_plan_active if p.active else T.mc_st_closed, 'ok' if p.active else 'n') }}</div>
+  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("finance") }}<div><h2>{{ p.name }}</h2><div class="n-card-d">{% if p.price is not none %}{{ p.price }} {{ p.currency or '' }} / {{ T['mc_bp_' ~ p.billingPeriod] }}{% endif %}</div></div>{{ badge(T.mc_plan_active if p.active else T.mc_st_closed, 'ok' if p.active else 'n') }}</div>
     <form method="post" action="/marketing-clients/plans/{{ p.id }}/update" class="n-bd n-col" style="gap:14px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="version" value="{{ p.version }}">
       <div class="n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end">
         <div class="n-field"><label>{{ T.mc_plan_name }}</label><input class="n-in" name="name" value="{{ p.name }}" required style="width:200px"></div>
