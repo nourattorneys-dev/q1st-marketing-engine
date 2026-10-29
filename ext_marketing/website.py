@@ -74,7 +74,8 @@ async def _wp_categories(t: dict, secret: str) -> list:
 ADAPTERS = {
     "strapi": {"test": _strapi_test, "categories": _strapi_categories, "check_url": _strapi_check_url, "publish": _strapi_publish},
     "wordpress": {"test": _wp_test, "categories": _wp_categories, "check_url": _wp(wordpress.check_url),
-                  "publish": _wp(wordpress.publish), "remove": _wp(wordpress.remove), "translate": _wp(wordpress.translate)},
+                  "publish": _wp(wordpress.publish), "remove": _wp(wordpress.remove), "translate": _wp(wordpress.translate),
+                  "set_seo": _wp(wordpress.set_seo)},
 }
 
 

@@ -19,6 +19,12 @@ def same_site(a: str | None, b: str | None) -> bool:
     return bool(a) and n(a) == n(b)
 
 
+def key(url: str) -> str:
+    """One page, however it is written: no fragment, host without 'www.', no trailing slash ("x.com" = "x.com/")."""
+    u = urlparse((url or "").split("#")[0])
+    return f"{(u.hostname or '').lower().removeprefix('www.')}{u.path.rstrip('/') or '/'}{'?' + u.query if u.query else ''}"
+
+
 class Page:
     def __init__(self, url, status, ctype, text, truncated):
         self.url, self.status, self.ctype, self.text, self.truncated = url, status, ctype, text, truncated
@@ -36,7 +42,7 @@ async def _get(c: httpx.AsyncClient, url: str, max_bytes: int, problems: list | 
                     continue
                 if r.status_code >= 400:
                     if problems is not None:
-                        problems.append({"url": url, "reason": REASON.get(r.status_code, f"HTTP {r.status_code}")})
+                        problems.append({"url": url, "status": r.status_code, "reason": REASON.get(r.status_code, f"HTTP {r.status_code}")})
                     return None
                 buf, trunc = bytearray(), False
                 async for chunk in r.aiter_bytes():
@@ -83,8 +89,9 @@ def _meta_text(html: str) -> str:
     return "\n".join(uniq)
 
 
-async def read(site_url: str, max_pages: int) -> tuple[list[dict], list[dict]]:
-    """(pages, problems). problems = [{url, reason}] for pages the site refused or that failed - reported, never silent."""
+async def read(site_url: str, max_pages: int, raw: bool = False) -> tuple:
+    """(pages, problems). problems = [{url, reason, status?}] for pages the site refused or that failed - reported, never silent.
+    raw=True also keeps each page's HTML and links, and adds a third item {refs: {address: [pages linking to it]}, unvisited: [...]}."""
     s = await db.settings(["site_fetch_timeout_seconds", "site_fetch_max_bytes", "site_page_chars", "site_min_body_chars",
                            "site_sitemap_urls", "site_sitemap_paths", "site_reader_name"])
     from shared.kb_sources import html_to_text                          # the portal's safe HTML reader
@@ -93,6 +100,7 @@ async def read(site_url: str, max_pages: int) -> tuple[list[dict], list[dict]]:
     ua = {"User-Agent": f"{s.get('site_reader_name') or 'Quantum1st-MarketingBot'}/1.0 (+https://q1st.io)"}
     host = urlparse(site_url).hostname
     pages, problems, seen, todo = [], [], set(), [site_url]
+    refs: dict = {}
     async with httpx.AsyncClient(timeout=float(s.get("site_fetch_timeout_seconds") or 20), follow_redirects=False, headers=ua) as c:
         maps = []
         rb = await _get(c, urljoin(site_url, "/robots.txt"), mx)        # the sitemap the site itself declares
@@ -118,18 +126,32 @@ async def read(site_url: str, max_pages: int) -> tuple[list[dict], list[dict]]:
         todo += [u for u in locs[:nmax] if same_site(urlparse(u).hostname, host) and not u.lower().endswith(SKIP)]
         while todo and len(pages) < max_pages:
             url = todo.pop(0)
-            if url in seen:
+            if key(url) in seen:
                 continue
-            seen.add(url)
+            seen.add(key(url))
             r = await _get(c, url, mx, problems)
             if r is None or "html" not in r.ctype:
                 continue
-            seen.add(r.url)
+            if key(r.url) in seen and key(r.url) != key(url):              # redirected to a page already read
+                continue
+            seen.add(key(r.url))
             title, text, links = html_to_text(r.text, r.url)
             how = "page"
             if len(text.strip()) < minb:
                 text, how = (text.strip() + "\n" + _meta_text(r.text)).strip(), "meta"
-            if text.strip():
+            own = [l for l in links if same_site(urlparse(l).hostname, host) and not l.lower().endswith(SKIP)]
+            if raw:
+                for l in dict.fromkeys(key(x) for x in own):
+                    if r.url not in refs.setdefault(l, []):
+                        refs[l].append(r.url)
+                pages.append({"url": r.url, "asked": url, "title": title, "text": text[:chars], "read": how, "truncated": r.truncated,
+                              "html": r.text, "links": own})
+            elif text.strip():
                 pages.append({"url": r.url, "title": title, "text": text[:chars], "read": how, "truncated": r.truncated})
-            todo += [l for l in links if same_site(urlparse(l).hostname, host) and l not in seen and not l.lower().endswith(SKIP)]
+            todo += [l for l in own if key(l) not in seen]
+    if raw:
+        for p in problems:
+            p["linkedFrom"] = refs.get(key(p["url"]), [])
+        left = {key(u): u for u in todo if key(u) not in seen}
+        return pages, problems, {"refs": refs, "unvisited": list(left.values())}
     return pages, problems

@@ -240,3 +240,47 @@ async def translate(t: dict, secret: str, external_id: str, language: str, piece
             code, msg = _code(r)
             raise WPError(f"The translation could not be stored: {msg or code or f'HTTP {r.status_code}'}")
         return r.json()
+
+
+def _same_page(a: str, b: str) -> bool:
+    n = lambda u: (lambda p: (p.hostname or "").lower().removeprefix("www.") + (p.path.rstrip("/") or "/"))(urlparse(u or ""))
+    return n(a) == n(b)
+
+
+async def set_seo(t: dict, secret: str, page_url: str, values: dict) -> dict:
+    """Writes the SEO title and/or description (values: {metaTitle?, metaDescription?}) of the post or page at page_url,
+    then reads them back. Returns {externalId, type, before: the values it replaced}. Raises WPError with a plain reason when the page cannot be found or the field cannot be written."""
+    s = t.get("settings") or {}
+    if not ((t.get("learned") or {}).get("yoast")):
+        raise WPError("The site has no SEO plugin the engine can write to (Yoast SEO). Change this on the website.")
+    path = urlparse(page_url).path.rstrip("/")
+    slug = path.rsplit("/", 1)[-1] if path else ""
+    if not slug:
+        raise WPError("The home page's SEO text is set in the site's SEO plugin settings. Change it there.")
+    async with await _client(s, secret) as c:
+        r = await c.get("/wp/v2/search", params={"search": slug.replace("-", " "), "type": "post", "subtype": "any", "per_page": 50,
+                                                 "_fields": "id,url,subtype"})
+        if r.status_code >= 400:
+            raise WPError(_human(r, "find the page"))
+        hit = next((x for x in r.json() or [] if _same_page(x.get("url"), page_url)), None)
+        if not hit:
+            raise WPError("This address is not a post or page the engine can edit (it may be an archive, or a translation "
+                          "kept by a translation plugin). Change it on the website.")
+        base = await _base(c, hit["subtype"])
+        old = await c.get(f"/wp/v2/{base}/{hit['id']}", params={"context": "edit", "_fields": "meta"})
+        before = ((old.json() or {}).get("meta") or {}) if old.status_code < 400 else {}
+        meta = {YOAST["yoast.title"]: values["metaTitle"]} if values.get("metaTitle") else {}
+        if values.get("metaDescription"):
+            meta[YOAST["yoast.description"]] = values["metaDescription"]
+        w = await c.post(f"/wp/v2/{base}/{hit['id']}", json={"meta": meta})
+        if w.status_code >= 400:
+            code, msg = _code(w)
+            if code == "rest_invalid_param" and "meta" in msg.lower():
+                raise WPError("The site did not accept the SEO fields. Activate the Q1st Connector plugin.")
+            raise WPError(_human(w, "save the SEO text"))
+        got = (w.json() or {}).get("meta") or {}
+        if any(got.get(k) != v for k, v in meta.items()):
+            raise WPError("The site answered, but the SEO text did not change. Check the Q1st Connector plugin is active.")
+        back = {"metaTitle": YOAST["yoast.title"], "metaDescription": YOAST["yoast.description"]}
+        return {"externalId": str(hit["id"]), "type": hit["subtype"],
+                "before": {k: before.get(m) or "" for k, m in back.items() if values.get(k)}}
