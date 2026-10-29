@@ -183,8 +183,17 @@ async def main():
     ok("T21 rescan: a dismissed one stays dismissed", after.get(("/team", "missing_h1")) == "dismissed", after)
     ok("T22 rescan: the applied description stays applied (the live page now has one)", after.get(("/services", "missing_description")) == "applied", after)
     ok("T23 rescan: what is still wrong stays open", after.get(("/old-page", "broken_link")) == "open" and after.get(("/about", "many_h1")) == "open", after)
+    await p.execute(f"UPDATE {S}.plan_quotas SET limit_value = 3 WHERE plan_id = $1 AND metric = 'siteScans'", plan["id"])
+    await p.execute(f"UPDATE {S}.settings SET value = '2' WHERE key = 'health_max_pages'")     # /about and /team are now only link-checked
+    r = (await c.post(f"{A}/site/scan", headers=K)).json()["data"]; j = await run_job(r["jobId"])
+    await p.execute(f"UPDATE {S}.settings SET value = '50' WHERE key = 'health_max_pages'")
+    small = {(urlparse(f["url"]).path, f["code"]): f["status"] for f in (await c.get(f"{A}/site/findings", headers=K, params={"pageSize": 100})).json()["data"]}
+    ok("T23b a page this scan only link-checked keeps its findings (not read = not measured = not resolved)",
+       j["result"]["pages"] == 2 and small.get(("/about", "title_length")) in ("open", "prepared") and small.get(("/about", "many_h1")) == "open" and
+       small.get(("/team", "missing_h1")) == "dismissed", (j["result"], small))
+    ok("T23c the broken links are still reported by the small scan", small.get(("/old-page", "broken_link")) == "open", small)
     r = (await c.post(f"{A}/site/scan", headers=K)).json()
-    ok("T24 the third scan passes the hard limit of 2: refused 429 quota_exceeded", r.get("error", {}).get("code") == "quota_exceeded", r)
+    ok("T24 the next scan passes the hard limit: refused 429 quota_exceeded", r.get("error", {}).get("code") == "quota_exceeded", r)
     print(f"\nPASSED {P}   FAILED {F}")
 
 

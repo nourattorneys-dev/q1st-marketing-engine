@@ -15,6 +15,8 @@ log = logging.getLogger("ext_marketing.health")
 WRITES = {"missing_title": "metaTitle", "title_length": "metaTitle", "duplicate_title": "metaTitle",
           "missing_description": "metaDescription", "description_length": "metaDescription", "duplicate_description": "metaDescription"}
 BAND = {"metaTitle": "the title", "metaDescription": "the meta description"}
+LINK_CODES = ("broken_link", "page_unreachable")                     # about an address, not a page's content
+DUP_CODES = ("duplicate_title", "duplicate_description")             # about a page AND the pages it shares text with
 
 
 def _band(n: int, band) -> bool:
@@ -149,11 +151,25 @@ async def scan(job: dict) -> dict:
                         fix_data = CASE WHEN {S}.site_findings.status IN ('prepared') THEN {S}.site_findings.fix_data END""",
                 security.new_id("sf"), site["id"], url, f["code"], checks[f["code"]].get("level") or "warn", f["issue"],
                 _advice(checks, f["code"], lang), f["detail"])
-        read = [p["url"] for p in pages] + [p["url"] for p in problems] + asked   # only what this scan looked at can be resolved
-        gone = await con.fetchval(
-            f"""WITH d AS (DELETE FROM {S}.site_findings WHERE site_id = $1 AND status IN ('open','prepared') AND url = ANY($2)
-                           AND NOT ((url, code) IN (SELECT * FROM unnest($3::text[], $4::text[]))) RETURNING 1) SELECT count(*) FROM d""",
-            site["id"], read, [k[0] for k in keys], [k[1] for k in keys])
+        # a finding is removed only when this scan measured what it is about and the problem was not found again:
+        # page checks need the page read; a duplicate also needs the pages it shared with; link checks need the address asked
+        pages_read = {sitepages.key(p["url"]) for p in pages}
+        asked_any = pages_read | {sitepages.key(u) for u in [p["url"] for p in problems] + asked}
+        gone_ids = []
+        for x in await con.fetch(f"SELECT id, url, code, detail FROM {S}.site_findings WHERE site_id = $1 AND status IN ('open','prepared')", site["id"]):
+            if (x["url"], x["code"]) in keys:
+                continue
+            k = sitepages.key(x["url"])
+            if x["code"] in LINK_CODES:
+                measured = k in asked_any
+            elif x["code"] in DUP_CODES:
+                measured = k in pages_read and all(sitepages.key(u) in pages_read for u in (x["detail"] or {}).get("samePages") or [])
+            else:
+                measured = k in pages_read
+            if measured:
+                gone_ids.append(x["id"])
+        await con.execute(f"DELETE FROM {S}.site_findings WHERE id = ANY($1)", gone_ids)
+        gone = len(gone_ids)
     open_n = await db.pool().fetchval(f"SELECT count(*) FROM {S}.site_findings WHERE site_id = $1 AND status = 'open'", site["id"])
     await meter.record(site["account_id"], site["id"], "siteScans", 1, job_id=job["id"])
     await webhooks.emit(site["id"], "site.scan_finished", {"findings": open_n})
