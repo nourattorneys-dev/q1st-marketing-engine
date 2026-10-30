@@ -292,6 +292,17 @@ async def delete_site(aid: str, sid: str, request: Request):
     return _back(f"{BASE}/{aid}", T, err, "mc_site_deleted", data=d)
 
 
+@router.post("/{aid}/sites/{sid}/rename")
+async def rename_site(aid: str, sid: str, request: Request):
+    """A site's name, as its people see it on the client dashboard too."""
+    user, deny = _gate(request)
+    if deny:
+        return deny
+    f = await _form(request); T = _T(request, user)
+    d, err = await _api(user, "PUT", f"/admin/v1/accounts/{aid}/sites/{sid}", {"name": (f.get("name") or "").strip()})
+    return _back(f"{BASE}/{aid}", T, err, "mc_saved", data=d)
+
+
 @router.post("/{aid}/sites/{sid}/dashboard")
 async def site_dashboard(aid: str, sid: str, request: Request):
     """P1c: puts the site on the client dashboard (new key, kept by the dashboard only) and invites the client's first Admin."""

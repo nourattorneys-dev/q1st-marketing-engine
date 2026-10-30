@@ -432,7 +432,11 @@ async def admin_update_site(aid: str, sid: str, req: Request):
     if not row:
         raise ApiError(404, "not_found", "Site not found.")
     await audit(ACTOR_OF(req), "site.update", account_id=aid, site_id=sid, detail={"fields": list(cols)})
-    return ok(await shapes.site(dict(row)))
+    warn = None
+    if "name" in cols:                                                  # the client dashboard shows the site by name
+        acc = await db.pool().fetchval(f"SELECT name FROM {S}.accounts WHERE id = $1", aid)
+        warn = await dashboard.follow({"action": "site.upsert", "accountId": aid, "accountName": acc, "siteId": sid, "siteName": row["name"]}, sid)
+    return ok({**(await shapes.site(dict(row))), **({"dashboardError": warn} if warn else {})})
 
 
 @r.post("/accounts/{aid}/sites/{sid}/dashboard")

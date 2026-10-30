@@ -117,6 +117,13 @@ async def main():
        and "another client" in r.json()["data"].get("dashboardError", ""), r.text)
     ANSWER["mode"] = "ok"
 
+    # ---- site rename (P2b)
+    n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}/sites/{SID}", headers=ADM, json={"name": "Dash site renamed"})
+    ok("R1 a dashboard site's rename is followed by the dashboard, without a new key",
+       r.status_code == 200 and r.json()["data"]["name"] == "Dash site renamed" and GOT[n]["d"].get("siteName") == "Dash site renamed"
+       and "engineKey" not in GOT[n]["d"] and GOT[n]["signed"], (r.text, GOT[n:]))
+
     other = (await c.post(f"/admin/v1/accounts/{A}/sites", headers=ADM, json={"name": "Not on dash", "url": "https://other.example.com",
              "timezone": "Asia/Dubai", "languages": ["en"], "defaultLanguage": "en"})).json()["data"]
     n = len(GOT)
