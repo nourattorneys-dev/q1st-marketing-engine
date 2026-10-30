@@ -3,7 +3,7 @@ served by the ext_marketing service). shell.py adds them to its table; an existi
 
 EN = {
     'mc_brand_logo': 'Logo on their dashboard', 'mc_brand_logo_h': 'The https:// address of the client\'s logo image (PNG, JPEG, WebP or SVG), e.g. from their website. The dashboard keeps its own copy. Empty = the Quantum1st mark.',
-    'mc_brand_color': 'Main colour', 'mc_brand_color_h': 'Buttons, links and the chosen page on the client\'s dashboard use this colour. Off = Quantum1st blue.', 'mc_brand_color_use': 'Use',
+    'mc_brand_color': 'Main colour, light mode', 'mc_brand_color_dark': 'Main colour, dark mode', 'mc_brand_color_h': 'Buttons, links and the chosen page on the client\'s dashboard use this colour. Pick it or type a hex code like #1F4FD1. Empty = Quantum1st blue.',
     'mc_client_delete': 'Delete client', 'mc_client_delete_h': 'A closed client can be deleted: its sites, keys and dashboard people go; revenue and usage history stay.',
     'mc_client_delete_q': 'Delete this client? Its sites and keys stop at once, and its people can no longer sign in to the client dashboard. This cannot be undone.',
     'mc_client_deleted': 'Client deleted.',
@@ -84,7 +84,7 @@ EN = {
 
 AR = {
     'mc_brand_logo': 'الشعار على لوحتهم', 'mc_brand_logo_h': 'عنوان https:// لصورة شعار العميل (PNG أو JPEG أو WebP أو SVG)، مثلاً من موقعه. تحتفظ اللوحة بنسختها. فارغ = شعار Quantum1st.',
-    'mc_brand_color': 'اللون الرئيسي', 'mc_brand_color_h': 'تستخدم أزرار لوحة العميل وروابطها والصفحة المختارة هذا اللون. عند الإيقاف يُستخدم أزرق Quantum1st.', 'mc_brand_color_use': 'استخدام',
+    'mc_brand_color': 'اللون الرئيسي، الوضع الفاتح', 'mc_brand_color_dark': 'اللون الرئيسي، الوضع الداكن', 'mc_brand_color_h': 'تستخدم أزرار لوحة العميل وروابطها والصفحة المختارة هذا اللون. اختره أو اكتب رمزه مثل #1F4FD1. فارغ = أزرق Quantum1st.',
     'mc_client_delete': 'حذف العميل', 'mc_client_delete_h': 'يمكن حذف العميل المغلق: تُزال مواقعه ومفاتيحه ومستخدموه على لوحة العميل، ويبقى سجل الإيرادات والاستخدام.',
     'mc_client_delete_q': 'حذف هذا العميل؟ تتوقف مواقعه ومفاتيحه فوراً ولن يتمكن مستخدموه من الدخول إلى لوحة العميل. لا يمكن التراجع عن ذلك.',
     'mc_client_deleted': 'حُذف العميل.',

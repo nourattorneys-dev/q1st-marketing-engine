@@ -37,12 +37,12 @@ def account(r: dict) -> dict:
 
 
 def brand(r: dict) -> dict:
-    """A client's look on the client dashboard: {color, logoUrl}, each None when not set."""
+    """A client's look on the client dashboard: {color, colorDark, logoUrl}, each None when not set."""
     b = r.get("brand") or {}
     if isinstance(b, str):
         import json
         b = json.loads(b)
-    return {"color": b.get("color"), "logoUrl": b.get("logoUrl")}
+    return {"color": b.get("color"), "colorDark": b.get("colorDark"), "logoUrl": b.get("logoUrl")}
 
 
 def plan(r: dict, quotas: list[dict]) -> dict:

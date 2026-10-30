@@ -79,7 +79,7 @@
       <div class="n-field"><label for="ac-notes">{{ T.mc_notes }}</label><input class="n-in" id="ac-notes" name="notes" value="{{ a.notes or '' }}" style="width:260px"></div>
       {% set br = a.brand or {} %}
       <div class="n-field"><label for="ac-logo">{{ T.mc_brand_logo }}{{ hint(T.mc_brand_logo_h) }}</label><input class="n-in" id="ac-logo" name="brand_logo" type="url" dir="ltr" placeholder="https://www.example.com/logo.png" value="{{ br.logoUrl or '' }}" style="width:300px"></div>
-      <div class="n-field"><label for="ac-color">{{ T.mc_brand_color }}{{ hint(T.mc_brand_color_h) }}</label><div class="n-row" style="gap:8px;align-items:center"><label class="n-check"><input type="checkbox" name="brand_on" value="1" {% if br.color %}checked{% endif %}> {{ T.mc_brand_color_use }}</label><input id="ac-color" name="brand_color" type="color" value="{{ br.color or '#2f6bff' }}" style="width:44px;height:36px;padding:2px;border-radius:8px"></div></div>
+      {% for key, val, lab in (('brand_color', br.color, T.mc_brand_color), ('brand_color_dark', br.colorDark, T.mc_brand_color_dark)) %}<div class="n-field"><label for="ac-{{ key }}">{{ lab }}{{ hint(T.mc_brand_color_h) }}</label><div class="n-row" style="gap:6px;align-items:center"><input type="color" data-hex-for="ac-{{ key }}" value="{{ val or '#2f6bff' }}" aria-label="{{ lab }}" style="width:40px;height:36px;padding:2px;border-radius:8px"><input class="n-in" id="ac-{{ key }}" name="{{ key }}" value="{{ val or '' }}" placeholder="#2F6BFF" pattern="#[0-9a-fA-F]{6}" dir="ltr" autocomplete="off" style="width:110px"></div></div>{% endfor %}
       <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_save }}</button></form>
     {% if a.status == 'closed' %}<form method="post" action="/marketing-clients/{{ a.id }}/delete" class="n-bd n-row" style="gap:12px;align-items:center;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <span class="n-mut">{{ T.mc_client_delete_h }}</span><button class="n-btn s d" data-confirm="{{ T.mc_client_delete_q }}" data-confirm-kind="danger">{{ T.mc_client_delete }}</button></form>{% endif %}</div>
@@ -151,7 +151,8 @@
   {% endif %}
 </div>
 {% endblock %}
-{% block scripts %}{% if new_key %}<script>(function(){ /* EXT-3d: the new key is shown once; Done opens after Copy or the "I saved it" tick; closing removes the key from the page */
+{% block scripts %}<script>(function(){ /* brand colours: the swatch and the hex box show the same colour; an empty box means the Quantum1st colour */
+document.querySelectorAll("[data-hex-for]").forEach(function(p){var t=document.getElementById(p.dataset.hexFor);if(!t)return;p.addEventListener("input",function(){t.value=p.value.toUpperCase()});t.addEventListener("input",function(){if(/^#[0-9a-fA-F]{6}$/.test(t.value))p.value=t.value.toLowerCase()})});})();</script>{% if new_key %}<script>(function(){ /* EXT-3d: the new key is shown once; Done opens after Copy or the "I saved it" tick; closing removes the key from the page */
   var d=document.getElementById("mc-key-dlg"), v=document.getElementById("mc-key-val"), cb=document.getElementById("mc-key-copy"),
       ct=document.getElementById("mc-key-copy-t"), saved=document.getElementById("mc-key-saved"), done=document.getElementById("mc-key-close");
   if(!d) return;

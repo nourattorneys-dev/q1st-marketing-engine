@@ -265,14 +265,16 @@ async def update_account(aid: str, req: Request):
         raise validate.bad({"planId": "Unknown plan"})
     f = {}
     brand_in = None
-    if "brandColor" in d or "brandLogoUrl" in d:
+    if "brandColor" in d or "brandColorDark" in d or "brandLogoUrl" in d:
         color = (d.get("brandColor") or "").strip() or None
+        color_dark = (d.get("brandColorDark") or "").strip() or None
         logo = (d.get("brandLogoUrl") or "").strip() or None
-        if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
-            f["brandColor"] = "A colour like #1F4FD1"
+        for field, value in (("brandColor", color), ("brandColorDark", color_dark)):
+            if value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+                f[field] = "A colour like #1F4FD1"
         if logo and (not logo.startswith("https://") or len(logo) > 500):
             f["brandLogoUrl"] = "An https:// address of the logo image"
-        brand_in = {"color": color.lower() if color else None, "logoUrl": logo}
+        brand_in = {"color": color.lower() if color else None, "colorDark": color_dark.lower() if color_dark else None, "logoUrl": logo}
     if f:
         raise validate.bad(f)
     old = await db.pool().fetchrow(f"SELECT plan_id, status, brand FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)

@@ -255,7 +255,7 @@ async def update_client(aid: str, request: Request):
     d, err = await _api(user, "PUT", f"/admin/v1/accounts/{aid}", {
         "version": _num(f.get("version"), int), "name": f.get("name"), "planId": f.get("plan_id") or None,
         "status": f.get("status"), "priceOverride": _num(f.get("price_override")), "notes": f.get("notes"),
-        "brandColor": f.get("brand_color") if f.get("brand_on") else None, "brandLogoUrl": f.get("brand_logo")})
+        "brandColor": f.get("brand_color"), "brandColorDark": f.get("brand_color_dark"), "brandLogoUrl": f.get("brand_logo")})
     return _back(f"{BASE}/{aid}", T, err, data=d)
 
 
