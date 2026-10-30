@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request
 
 import json
 
-from . import db, quotas, security, shapes, validate, webhooks
+from . import dashboard, db, quotas, security, shapes, validate, webhooks
 from .auth import ApiError, admin, audit
 from .routes_client import body, ok
 
@@ -227,6 +227,7 @@ async def account_detail(aid: str, req: Request):
                "price": a["price_override"] if a["price_override"] is not None else (plan or {}).get("price"),
                "usage": await quotas.effective(aid), "sites": sites,
                "webhooks": {s["id"]: await webhooks.status(s["id"]) for s in sites},
+               "dashboard": {"on": dashboard.configured(), "sites": [s["id"] for s in sites if await dashboard.on_dashboard(s["id"])]},
                "overrides": [{"id": x["id"], "metric": x["metric"], "siteId": x["site_id"], "limit": x["limit_value"], "mode": x["mode"],
                               "warnAt": x["warn_at"], "reason": x["reason"], "setBy": x["set_by"], "at": x["created_at"]} for x in ovr],
                "upgradeRequests": [{"id": x["id"], "siteId": x["site_id"], "metric": x["metric"], "note": x["note"], "by": x["requested_by"],
@@ -274,7 +275,8 @@ async def update_account(aid: str, req: Request):
     if d.get("planId") and d["planId"] != old_plan:
         await webhooks.emit_account(aid, "plan.changed", {"planId": d["planId"]})
     await audit(ACTOR_OF(req), "account.update", account_id=aid, detail={"fields": list(d)})
-    return ok(shapes.account(dict(row)))
+    warn = await dashboard.follow({"action": "client.rename", "accountId": aid, "accountName": row["name"]}) if d.get("name") else None
+    return ok({**shapes.account(dict(row)), **({"dashboardError": warn} if warn else {})})
 
 
 @r.get("/accounts/{aid}/sites")
@@ -302,12 +304,14 @@ async def create_site(aid: str, req: Request):
 @r.delete("/accounts/{aid}/sites/{sid}")
 async def delete_site(aid: str, sid: str, req: Request):
     admin(req)
+    warn = await dashboard.follow({"action": "site.remove", "accountId": aid, "siteId": sid}, sid) \
+        if await db.pool().fetchval(f"SELECT 1 FROM {S}.sites WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL", sid, aid) else None
     n = await db.pool().execute(f"UPDATE {S}.sites SET deleted_at = now() WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL", sid, aid)
     if n.endswith(" 0"):
         raise ApiError(404, "not_found", "Site not found.")
     await db.pool().execute(f"UPDATE {S}.api_keys SET revoked_at = now() WHERE site_id = $1 AND revoked_at IS NULL", sid)
     await audit(ACTOR_OF(req), "site.delete", account_id=aid, site_id=sid)
-    return ok({"deleted": True})
+    return ok({"deleted": True, **({"dashboardError": warn} if warn else {})})
 
 
 # ---------------------------------------------------------------- API keys
@@ -385,6 +389,16 @@ async def admin_update_site(aid: str, sid: str, req: Request):
         raise ApiError(404, "not_found", "Site not found.")
     await audit(ACTOR_OF(req), "site.update", account_id=aid, site_id=sid, detail={"fields": list(cols)})
     return ok(await shapes.site(dict(row)))
+
+
+@r.post("/accounts/{aid}/sites/{sid}/dashboard")
+async def site_dashboard(aid: str, sid: str, req: Request):
+    """P1c: puts the site on the client dashboard (or refreshes its key), inviting the client's first Admin when an email is given."""
+    admin(req)
+    d = await body(req)
+    out = await dashboard.set_up(aid, sid, d.get("adminEmail"))
+    await audit(ACTOR_OF(req), "site.dashboard", account_id=aid, site_id=sid, detail={"admin": out.get("admin"), "key": out["keyId"]})
+    return ok(out)
 
 
 @r.delete("/accounts/{aid}/quota-overrides/{oid}")

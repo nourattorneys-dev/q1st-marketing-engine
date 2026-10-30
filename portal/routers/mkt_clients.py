@@ -70,9 +70,16 @@ def _msg(T, err):
     return (err.get("message") or "") + ((" — " + "; ".join(f"{k}: {v}" for k, v in f.items())) if f else "")
 
 
-def _back(to, T, err=None, ok_key="mc_saved"):
+def _back(to, T, err=None, ok_key="mc_saved", data=None):
+    """data: the service's answer; its dashboardError (the client dashboard didn't follow a change) shows as a warning."""
     r = RedirectResponse(to, status_code=303)
-    set_flash(r, _msg(T, err) if err else T[ok_key], "error" if err else "success")
+    follow = (data or {}).get("dashboardError") if isinstance(data, dict) else None
+    if err:
+        set_flash(r, _msg(T, err), "error")
+    elif follow:
+        set_flash(r, T["mc_dash_follow_bad"].replace("{reason}", follow), "error")
+    else:
+        set_flash(r, T[ok_key], "success")
     return r
 
 
@@ -245,10 +252,10 @@ async def update_client(aid: str, request: Request):
     if deny:
         return deny
     f = await _form(request); T = _T(request, user)
-    _, err = await _api(user, "PUT", f"/admin/v1/accounts/{aid}", {
+    d, err = await _api(user, "PUT", f"/admin/v1/accounts/{aid}", {
         "version": _num(f.get("version"), int), "name": f.get("name"), "planId": f.get("plan_id") or None,
         "status": f.get("status"), "priceOverride": _num(f.get("price_override")), "notes": f.get("notes")})
-    return _back(f"{BASE}/{aid}", T, err)
+    return _back(f"{BASE}/{aid}", T, err, data=d)
 
 
 @router.post("/{aid}/sites/new")
@@ -269,8 +276,20 @@ async def delete_site(aid: str, sid: str, request: Request):
     if deny:
         return deny
     T = _T(request, user)
-    _, err = await _api(user, "DELETE", f"/admin/v1/accounts/{aid}/sites/{sid}")
-    return _back(f"{BASE}/{aid}", T, err, "mc_site_deleted")
+    d, err = await _api(user, "DELETE", f"/admin/v1/accounts/{aid}/sites/{sid}")
+    return _back(f"{BASE}/{aid}", T, err, "mc_site_deleted", data=d)
+
+
+@router.post("/{aid}/sites/{sid}/dashboard")
+async def site_dashboard(aid: str, sid: str, request: Request):
+    """P1c: puts the site on the client dashboard (new key, kept by the dashboard only) and invites the client's first Admin."""
+    user, deny = _gate(request)
+    if deny:
+        return deny
+    f = await _form(request); T = _T(request, user)
+    d, err = await _api(user, "POST", f"/admin/v1/accounts/{aid}/sites/{sid}/dashboard", {"adminEmail": (f.get("admin_email") or "").strip() or None})
+    adm = (d or {}).get("admin")
+    return _back(f"{BASE}/{aid}", T, err, {"invited": "mc_dash_ok_invited", "reinvited": "mc_dash_ok_reinvited"}.get(adm, "mc_dash_ok"))
 
 
 @router.post("/{aid}/sites/{sid}/webhook-test")

@@ -2,6 +2,13 @@
 served by the ext_marketing service). shell.py adds them to its table; an existing key is never replaced."""
 
 EN = {
+    'mc_dash': 'Client dashboard', 'mc_dash_on': 'on dashboard', 'mc_dash_put': 'Put on dashboard', 'mc_dash_refresh': 'Refresh dashboard key',
+    'mc_dash_email': 'First Admin email', 'mc_dash_email_h': 'Optional. This person gets an email invitation to sign in to the client dashboard as its Admin.',
+    'mc_dash_h': 'Sets the site up on the client dashboard in one step: a new site key and webhook go straight to the dashboard and are never shown. Refreshing replaces the key the dashboard used.',
+    'mc_dash_off': 'The client dashboard is not connected to this engine yet.',
+    'mc_dash_ok': 'The site is on the client dashboard.', 'mc_dash_ok_invited': 'The site is on the client dashboard, and the invitation email was sent.',
+    'mc_dash_ok_reinvited': 'The site is on the client dashboard, and the invitation was sent again with a new link.',
+    'mc_dash_follow_bad': 'Saved here, but the client dashboard did not update: {reason}',
     'grp_mkt_clients': 'Marketing clients',
     'mc_copy': 'Copy', 'mc_copied': 'Copied', 'mc_close': 'Close', 'mc_category_pick': 'Choose…',
     'mc_key_delete': 'Delete', 'mc_key_delete_q': 'Delete this revoked key from the list? The audit log keeps its history.', 'mc_key_deleted_ok': 'Key deleted.',
@@ -71,6 +78,13 @@ EN = {
 }
 
 AR = {
+    'mc_dash': 'لوحة العميل', 'mc_dash_on': 'على اللوحة', 'mc_dash_put': 'إضافته إلى لوحة العميل', 'mc_dash_refresh': 'تجديد مفتاح اللوحة',
+    'mc_dash_email': 'بريد أول مسؤول', 'mc_dash_email_h': 'اختياري. يصل إلى هذا الشخص بريد دعوة للدخول إلى لوحة العميل بصفة مسؤول.',
+    'mc_dash_h': 'يجهّز الموقع على لوحة العميل بخطوة واحدة: مفتاح جديد للموقع وعنوان إشعارات يذهبان مباشرة إلى اللوحة ولا يُعرضان. التجديد يستبدل المفتاح الذي تستخدمه اللوحة.',
+    'mc_dash_off': 'لوحة العميل غير موصولة بهذا المحرك بعد.',
+    'mc_dash_ok': 'الموقع على لوحة العميل.', 'mc_dash_ok_invited': 'الموقع على لوحة العميل، وأُرسل بريد الدعوة.',
+    'mc_dash_ok_reinvited': 'الموقع على لوحة العميل، وأُعيد إرسال الدعوة برابط جديد.',
+    'mc_dash_follow_bad': 'حُفظ هنا، لكن لوحة العميل لم تتحدّث: {reason}',
     'grp_mkt_clients': 'عملاء التسويق',
     'mc_copy': 'نسخ', 'mc_copied': 'تم النسخ', 'mc_close': 'إغلاق', 'mc_category_pick': 'اختر…',
     'mc_key_delete': 'حذف', 'mc_key_delete_q': 'حذف هذا المفتاح الملغى من القائمة؟ يحتفظ سجل التدقيق بتاريخه.', 'mc_key_deleted_ok': 'حُذف المفتاح.',

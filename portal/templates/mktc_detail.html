@@ -94,6 +94,15 @@
       <div class="n-field"><label for="st-dl">{{ T.mc_default_lang }}</label><select class="n-in" id="st-dl" name="default_language">{% for l in meta.languages or [] %}<option value="{{ l }}">{{ l }}</option>{% endfor %}</select></div>
       <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_site_new }}</button></form></div>
 
+  {% set dash = d.dashboard or {} %}
+  {% if d.sites %}<div class="n-card" id="dashboard"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_dash }}{{ hint(T.mc_dash_h) }}</h2></div></div>
+    {% if dash.on %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_key_site }}</th><th>{{ T.mc_dash_email }}{{ hint(T.mc_dash_email_h) }}</th><th></th></tr></thead>
+      {% for s in d.sites %}{% set here = s.id in (dash.sites or []) %}<tr><td>{{ s.name }}{% if here %} {{ badge(T.mc_dash_on, 'ok', True) }}{% endif %}</td>
+        <td colspan="2"><form method="post" action="/marketing-clients/{{ a.id }}/sites/{{ s.id }}/dashboard" class="n-row" style="gap:10px;align-items:center;flex-wrap:wrap"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input class="n-in" name="admin_email" type="email" dir="ltr" autocomplete="off" placeholder="name@example.com" aria-label="{{ T.mc_dash_email }}" style="width:240px">
+          <button class="n-btn {{ 's' if here else 'p' }}">{{ T.mc_dash_refresh if here else T.mc_dash_put }}</button></form></td></tr>{% endfor %}
+    </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_dash_off }}</div>{% endif %}</div>{% endif %}
+
   {% set hooks = (d.webhooks or {}).items() | selectattr(1) | list %}
   <div class="n-card" id="webhooks"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_wh }}{{ hint(T.mc_wh_h) }}</h2></div></div>
     {% if hooks %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_key_site }}</th><th>{{ T.mc_wh_url }}</th><th>{{ T.mc_wh_status }}</th><th>{{ T.mc_wh_last }}</th><th>{{ T.mc_wh_waiting }}</th><th></th></tr></thead>
