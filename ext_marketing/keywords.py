@@ -129,3 +129,9 @@ async def propose(job: dict) -> dict:
         await webhooks.emit(site["id"], "keywords.proposed", {"ids": new_ids})
     by_lang = {lg: await db.pool().fetchval(f"SELECT count(*) FROM {S}.keywords WHERE site_id=$1 AND source='ai' AND language=$2", site["id"], lg) for lg in langs}
     return {"added": added, "skipped": skipped, "pagesRead": len(pages), "readFromMeta": sum(1 for p in pages if p.get("read") == "meta"), "byLanguage": by_lang, "seeds": seeds, "marketData": len(market), "note": " ".join(x for x in (read_note, note) if x) or None, "readProblems": problems[:10]}
+
+
+@jobs.handler("seo.propose")
+async def propose_seo(job: dict) -> dict:
+    """Registered with the job runner here, beside the other proposals; the work is in profile.py."""
+    return await profile.propose_from_site(job)

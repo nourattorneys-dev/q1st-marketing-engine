@@ -19,6 +19,16 @@ async def get_seo(site_id: str, req: Request):
                "siteUrl": v.get("siteUrl") or site["url"], "defaultLang": v.get("defaultLang") or site["default_language"], "version": ver})
 
 
+@r.post("/sites/{site_id}/settings/seo/propose")
+async def propose_seo(site_id: str, req: Request):
+    """"Fill from my website": reads the site's own pages and proposes the whole profile, as a job. Nothing is saved."""
+    c = await caller(req); await site_of(c, site_id)
+    await quotas.check(c.account_id, site_id, {"profileProposals": 1, "aiTokens": 0})
+    jid = await jobs.enqueue(c.account_id, site_id, "seo.propose", {"by": c.name})
+    await audit(c.name, "seo.propose", account_id=c.account_id, site_id=site_id, target=jid)
+    return ok({"jobId": jid, "status": "queued"})
+
+
 @r.put("/sites/{site_id}/settings/seo")
 async def put_seo(site_id: str, req: Request):
     c = await caller(req); site = await site_of(c, site_id)
