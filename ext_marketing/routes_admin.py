@@ -3,7 +3,7 @@ Plans, quotas, accounts, sites, per-site API keys, quota overrides."""
 from __future__ import annotations
 from fastapi import APIRouter, Request
 
-import json
+import json, re
 
 from . import dashboard, db, quotas, security, shapes, validate, webhooks
 from .auth import ApiError, admin, audit
@@ -263,20 +263,35 @@ async def update_account(aid: str, req: Request):
         raise validate.bad({"status": "active, suspended or closed"})
     if d.get("planId") and not await db.pool().fetchval(f"SELECT 1 FROM {S}.plans WHERE id = $1", d["planId"]):
         raise validate.bad({"planId": "Unknown plan"})
-    old = await db.pool().fetchrow(f"SELECT plan_id, status FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
+    f = {}
+    brand_in = None
+    if "brandColor" in d or "brandLogoUrl" in d:
+        color = (d.get("brandColor") or "").strip() or None
+        logo = (d.get("brandLogoUrl") or "").strip() or None
+        if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            f["brandColor"] = "A colour like #1F4FD1"
+        if logo and (not logo.startswith("https://") or len(logo) > 500):
+            f["brandLogoUrl"] = "An https:// address of the logo image"
+        brand_in = {"color": color.lower() if color else None, "logoUrl": logo}
+    if f:
+        raise validate.bad(f)
+    old = await db.pool().fetchrow(f"SELECT plan_id, status, brand FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
     old_plan = old["plan_id"] if old else None
     row = await db.pool().fetchrow(
         f"""UPDATE {S}.accounts SET name = coalesce($3, name), plan_id = coalesce($4, plan_id), status = coalesce($5, status),
             price_override = CASE WHEN $6::boolean THEN $7 ELSE price_override END, notes = coalesce($8, notes),
+            brand = coalesce($9::jsonb, brand),
             version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 AND deleted_at IS NULL RETURNING *""",
         aid, int(d.get("version") or 0), d.get("name"), d.get("planId"), d.get("status"),
-        "priceOverride" in d, d.get("priceOverride"), d.get("notes"))
+        "priceOverride" in d, d.get("priceOverride"), d.get("notes"), brand_in)
     if not row:
         raise ApiError(409, "version_conflict", "Account not found or changed meanwhile. Reload.")
     if d.get("planId") and d["planId"] != old_plan:
         await webhooks.emit_account(aid, "plan.changed", {"planId": d["planId"]})
     await audit(ACTOR_OF(req), "account.update", account_id=aid, detail={"fields": list(d)})
     warn = await dashboard.follow({"action": "client.rename", "accountId": aid, "accountName": row["name"]}) if d.get("name") else None
+    if old and brand_in is not None and brand_in != shapes.brand(dict(old)):     # the dashboard keeps its own copy of the logo
+        warn = await dashboard.follow({"action": "client.brand", "accountId": aid, "brand": brand_in}) or warn
     if old and row["status"] != old["status"]:                             # the dashboard pauses or closes the client's people too
         warn = await dashboard.follow({"action": "client.status", "accountId": aid, "status": row["status"]}) or warn
     return ok({**shapes.account(dict(row)), **({"dashboardError": warn} if warn else {})})

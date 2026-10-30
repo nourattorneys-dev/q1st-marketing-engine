@@ -129,6 +129,24 @@ async def main():
     r = await c.post(D, headers=ADM, json={})
     ok("T8 a removed site can't be set up: 404", r.status_code == 404, r.text)
 
+    # ---- client brand (P2)
+    ver = (await c.get(f"/admin/v1/accounts/{A}", headers=ADM)).json()["data"]["account"]["version"]
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "brandColor": "red", "brandLogoUrl": "http://x.example/l.png"})
+    ok("B1 a colour that isn't #rrggbb or a logo address that isn't https is refused, field by field",
+       r.status_code == 400 and set(r.json()["error"]["fields"]) == {"brandColor", "brandLogoUrl"}, r.text)
+    n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "brandColor": "#0A3D2A", "brandLogoUrl": "https://fakhernco.com/logo.png"})
+    got = [g["d"] for g in GOT[n:]]
+    ok("B2 saved, shown back, and sent to the dashboard (colour lower-cased)", r.status_code == 200
+       and r.json()["data"]["brand"] == {"color": "#0a3d2a", "logoUrl": "https://fakhernco.com/logo.png"}
+       and {"action": "client.brand", "accountId": A, "brand": {"color": "#0a3d2a", "logoUrl": "https://fakhernco.com/logo.png"}} in got, (r.text, got))
+    ver = r.json()["data"]["version"]; n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "brandColor": "#0a3d2a", "brandLogoUrl": "https://fakhernco.com/logo.png"})
+    ok("B3 the same brand again sends no brand change", not [g for g in GOT[n:] if g["d"]["action"] == "client.brand"])
+    ver = r.json()["data"]["version"]
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "notes": "no brand fields"})
+    ok("B4 a save without brand fields keeps the brand", r.json()["data"]["brand"]["color"] == "#0a3d2a", r.text)
+
     # ---- client status and delete
     acct = lambda: c.get(f"/admin/v1/accounts/{A}", headers=ADM)
     ver = (await acct()).json()["data"]["account"]["version"]

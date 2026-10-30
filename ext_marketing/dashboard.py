@@ -8,7 +8,7 @@ import json, os, time
 
 import httpx
 
-from . import db, security, webhooks
+from . import db, security, shapes, webhooks
 from .auth import ApiError
 
 S = db.SCHEMA
@@ -42,7 +42,7 @@ async def call(payload: dict) -> dict:
 
 async def _site(aid: str, sid: str):
     row = await db.pool().fetchrow(
-        f"""SELECT s.id, s.name, a.name AS account_name FROM {S}.sites s JOIN {S}.accounts a ON a.id = s.account_id
+        f"""SELECT s.id, s.name, a.name AS account_name, a.brand FROM {S}.sites s JOIN {S}.accounts a ON a.id = s.account_id
             WHERE s.id = $1 AND s.account_id = $2 AND s.deleted_at IS NULL""", sid, aid)
     if not row:
         raise ApiError(404, "not_found", "Site not found.")
@@ -56,7 +56,7 @@ async def set_up(aid: str, sid: str, admin_email: str | None) -> dict:
     raw, h, prefix = security.new_api_key()
     secret = webhooks.new_secret()
     payload = {"action": "site.upsert", "accountId": aid, "accountName": s["account_name"], "siteId": sid, "siteName": s["name"],
-               "engineKey": raw, "webhookSecret": secret}
+               "engineKey": raw, "webhookSecret": secret, "brand": shapes.brand(dict(s))}
     if admin_email and admin_email.strip():
         payload["admin"] = {"email": admin_email.strip()}
     data = await call(payload)

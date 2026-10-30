@@ -32,7 +32,17 @@ async def site(row: dict) -> dict:
 
 def account(r: dict) -> dict:
     return {"id": r["id"], "name": r["name"], "planId": r["plan_id"], "status": r["status"],
-            "priceOverride": r["price_override"], "notes": r["notes"], "createdAt": r["created_at"], "version": r["version"]}
+            "priceOverride": r["price_override"], "notes": r["notes"], "createdAt": r["created_at"], "version": r["version"],
+            "brand": brand(r)}
+
+
+def brand(r: dict) -> dict:
+    """A client's look on the client dashboard: {color, logoUrl}, each None when not set."""
+    b = r.get("brand") or {}
+    if isinstance(b, str):
+        import json
+        b = json.loads(b)
+    return {"color": b.get("color"), "logoUrl": b.get("logoUrl")}
 
 
 def plan(r: dict, quotas: list[dict]) -> dict:
