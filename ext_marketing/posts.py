@@ -146,6 +146,17 @@ async def _auto_photo(site: dict, p: dict, idea: str, alt: str) -> dict | None:
     return None
 
 
+async def settle_suggestion(sid: str | None) -> None:
+    """A topic idea leaves 'drafting' once its drafts are done: 'drafted' when one was written, back to 'new' when every one failed."""
+    if not sid:
+        return
+    await db.pool().execute(
+        f"""UPDATE {S}.suggestions g SET status = CASE WHEN EXISTS (SELECT 1 FROM {S}.posts WHERE suggestion_id = g.id AND content IS NOT NULL)
+                                                  THEN 'drafted' ELSE 'new' END
+            WHERE g.id = $1 AND g.status = 'drafting'
+              AND NOT EXISTS (SELECT 1 FROM {S}.posts WHERE suggestion_id = g.id AND status = 'drafting' AND source_id IS NULL)""", sid)
+
+
 async def recheck(p: dict) -> tuple[list, dict]:
     rl, _ = await R.for_site(p["site_id"])
     f = await twin_findings(p, R.check(p, rl))
@@ -167,6 +178,7 @@ async def draft(job: dict) -> dict:
                 await webhooks.emit(job["site_id"], "post.failed", {"postId": job["payload"]["postId"], "error": msg})
             await db.pool().execute(f"UPDATE {S}.posts SET status='failed', error=$2, updated_at=now() WHERE source_id=$1 AND status='drafting' AND content IS NULL",
                                     job["payload"]["postId"], "The version this is translated from could not be drafted. Ask for changes on it, then here.")
+            await settle_suggestion(await db.pool().fetchval(f"SELECT suggestion_id FROM {S}.posts WHERE id = $1", job["payload"]["postId"]))
         raise
 
 
@@ -220,6 +232,7 @@ async def _draft(job: dict) -> dict:
     if img and not p["image"]:
         await meter.record(site["account_id"], site["id"], "photos", 1, job_id=job["id"])
     await webhooks.emit(site["id"], "post.drafted", {"postId": pid, "status": "pending"})
+    await settle_suggestion(p["suggestion_id"])
     for t in await db.pool().fetch(f"SELECT id FROM {S}.posts WHERE source_id = $1 AND status = 'drafting'", pid):
         await jobs.enqueue(site["account_id"], site["id"], "post.twin", {"postId": t["id"]})
     await refresh_twins(pid)

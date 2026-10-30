@@ -44,12 +44,13 @@ async def _local(url, require_https=True):
     return url if urlparse(url).hostname == "127.0.0.1" else await _real(url, require_https)
 netguard.check = _local
 CALLS = []
+BLOG = ["/about"]
 async def fake_chat(messages, *, max_tokens, temperature=0.3):
     CALLS.append(messages)
     return json.dumps({"siteName": "Example Law Firm", "services": ["Employment law", "Company law", 7], "audience": "Companies and employees in the UAE",
                        "locations": ["Dubai", "Abu Dhabi"], "focusKeywords": ["employment lawyer Dubai"], "cta": "Book a consultation.",
                        "tone": "clear, expert", "avoid": ["guaranteed outcomes"], "linkedin": "https://www.linkedin.com/company/example-law",
-                       "instagram": "not a link", "defaultLang": "xx", "unknownField": "dropped"}), 120, 80
+                       "instagram": "not a link", "defaultLang": "xx", "unknownField": "dropped", "blogPath": BLOG[0]}), 120, 80
 llm.chat = fake_chat
 ADM = {"X-Admin-Key": os.environ["EXT_MKT_ADMIN_KEY"]}
 
@@ -94,6 +95,23 @@ async def main():
         if await p.fetchval(f"SELECT to_regclass('{S}.usage_events')") else None
     if used is not None:
         ok("T8 the run is metered as a profile fill", used == 1, used)
+
+    ok("T11 the model is told today's date, so it never presents an earlier year as current", "Today:" in CALLS[-1][1]["content"])
+    ok("T12 the articles page is proposed when the site links to it", res.get("blogPath") == "/about/", res.get("blogPath"))
+    BLOG[0] = "/not-linked-anywhere"
+    j = await run_job((await c.post(U + "/propose", headers=K, json={})).json()["data"]["jobId"])
+    r2 = j["result"] if isinstance(j["result"], dict) else json.loads(j["result"] or "{}")
+    ok("T13 a page the site doesn't link to is never proposed as the articles page", "blogPath" not in r2, r2.get("blogPath"))
+
+    from ext_marketing import posts
+    for case, content, want in (("written", "text", "drafted"), ("every draft failed", None, "new")):
+        sid = "sg_t" + uuid.uuid4().hex[:8]; pid = "p_t" + uuid.uuid4().hex[:8]
+        await p.execute(f"INSERT INTO {S}.suggestions (id, site_id, title, kind, language, keywords, why, status) VALUES ($1,$2,$3,'blog','en','{{}}','', 'drafting')", sid, site["id"], "Idea " + sid)
+        await p.execute(f"INSERT INTO {S}.posts (id, site_id, kind, platform, language, suggestion_id, status, topic, keywords, requested_by, content) "
+                        f"VALUES ($1,$2,'blog','website','en',$3,$4,'t','{{}}','t',$5)", pid, site["id"], sid, "pending" if content else "failed", content)
+        await posts.settle_suggestion(sid)
+        got = await p.fetchval(f"SELECT status FROM {S}.suggestions WHERE id = $1", sid)
+        ok(f"T14 an idea whose draft is {case} leaves 'drafting' -> {want}", got == want, got)
 
     STATE["down"] = True
     r = await c.post(U + "/propose", headers=K, json={})

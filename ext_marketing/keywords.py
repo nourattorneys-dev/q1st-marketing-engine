@@ -107,7 +107,7 @@ async def propose(job: dict) -> dict:
         {"role": "system", "content": "You are an SEO strategist for the website below. Propose keywords it can realistically rank for and that match what it offers. "
                                       "Prefer phrases with real search volume when market data is given; include long-tail phrases. Do not propose any phrase in the EXISTING list. "
                                       "Answer ONLY JSON: {\"keywords\": [{\"phrase\": \"...\", \"language\": \"" + "|".join(langs) + "\", \"rationale\": \"one short line\"}]}."},
-        {"role": "user", "content": f"{facts}\nHow many: {n_total} in total - {split}. Each phrase is written natively in its language (as people in that market search), not translated word for word\n\nMARKET DATA (SEMrush):\n{mk}\n\n"
+        {"role": "user", "content": f"{facts}\nHow many: {n_total} in total - {split}. Each phrase is written natively in its language (as people in that market search), not translated word for word. A phrase is written wholly in its own language and script, place names included; only acronyms and brand names people type in Latin letters (for example DIFC) stay as they are\n\nMARKET DATA (SEMrush):\n{mk}\n\n"
                                     f"EXISTING (do not repeat):\n{', '.join(existing[:400]) or '(none)'}\n\nWEBSITE PAGES:\n{site_txt[:12000]}"}],
         max_tokens=int(s["kw_max_tokens"]))
     tin += a; tout += b
