@@ -22,7 +22,7 @@ async def effective(account_id: str, site_id: str | None = None) -> dict:
     p = db.pool()
     start, end = await period()
     warn_default = (await db.settings(["quota_warn_at"])).get("quota_warn_at")
-    metrics = await p.fetch(f"SELECT key, label, unit FROM {S}.metrics WHERE active ORDER BY key")
+    metrics = await p.fetch(f"SELECT key, label, label_ar, unit FROM {S}.metrics WHERE active ORDER BY key")
     plan_q = {r["metric"]: r for r in await p.fetch(
         f"""SELECT q.* FROM {S}.plan_quotas q JOIN {S}.accounts a ON a.plan_id = q.plan_id WHERE a.id = $1""", account_id)}
     ovr = await p.fetch(f"SELECT * FROM {S}.quota_overrides WHERE account_id = $1", account_id)
@@ -37,7 +37,7 @@ async def effective(account_id: str, site_id: str | None = None) -> dict:
     for m in metrics:
         k = m["key"]
         src, q = ("site", site_o[k]) if k in site_o else ("account", acc_o[k]) if k in acc_o else ("plan", plan_q[k]) if k in plan_q else (None, None)
-        rows.append({"metric": k, "label": m["label"], "unit": m["unit"],
+        rows.append({"metric": k, "label": m["label"], "labelAr": m["label_ar"], "unit": m["unit"],
                      "limit": q["limit_value"] if q else None, "mode": (q["mode"] if q and q["mode"] else "hard") if q else None,
                      "warnAt": (q["warn_at"] if q and q["warn_at"] is not None else warn_default),
                      "used": int((site_used if src == "site" else used).get(k) or 0),
