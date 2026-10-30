@@ -204,7 +204,7 @@ async def accounts(req: Request):
         f"""SELECT a.*, p.name AS plan_name, coalesce(a.price_override, p.price) AS price, p.currency,
                    (SELECT count(*) FROM {S}.sites s WHERE s.account_id = a.id AND s.deleted_at IS NULL) AS site_count,
                    (SELECT count(*) FROM {S}.upgrade_requests u WHERE u.account_id = a.id AND u.status = 'open') AS open_requests
-            FROM {S}.accounts a LEFT JOIN {S}.plans p ON p.id = a.plan_id ORDER BY a.created_at DESC""")
+            FROM {S}.accounts a LEFT JOIN {S}.plans p ON p.id = a.plan_id WHERE a.deleted_at IS NULL ORDER BY a.created_at DESC""")
     return ok([{**shapes.account(dict(x)), "planName": x["plan_name"], "price": x["price"], "currency": x["currency"],
                 "siteCount": x["site_count"], "openRequests": x["open_requests"]} for x in rows])
 
@@ -214,7 +214,7 @@ async def account_detail(aid: str, req: Request):
     """Everything the Client page shows: account, plan, effective quotas with usage, overrides, sites, keys."""
     admin(req)
     p = db.pool()
-    a = await p.fetchrow(f"SELECT * FROM {S}.accounts WHERE id = $1", aid)
+    a = await p.fetchrow(f"SELECT * FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
     if not a:
         raise ApiError(404, "not_found", "Account not found.")
     plan = await _plan(a["plan_id"]) if a["plan_id"] else None
@@ -263,11 +263,12 @@ async def update_account(aid: str, req: Request):
         raise validate.bad({"status": "active, suspended or closed"})
     if d.get("planId") and not await db.pool().fetchval(f"SELECT 1 FROM {S}.plans WHERE id = $1", d["planId"]):
         raise validate.bad({"planId": "Unknown plan"})
-    old_plan = await db.pool().fetchval(f"SELECT plan_id FROM {S}.accounts WHERE id = $1", aid)
+    old = await db.pool().fetchrow(f"SELECT plan_id, status FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
+    old_plan = old["plan_id"] if old else None
     row = await db.pool().fetchrow(
         f"""UPDATE {S}.accounts SET name = coalesce($3, name), plan_id = coalesce($4, plan_id), status = coalesce($5, status),
             price_override = CASE WHEN $6::boolean THEN $7 ELSE price_override END, notes = coalesce($8, notes),
-            version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 RETURNING *""",
+            version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 AND deleted_at IS NULL RETURNING *""",
         aid, int(d.get("version") or 0), d.get("name"), d.get("planId"), d.get("status"),
         "priceOverride" in d, d.get("priceOverride"), d.get("notes"))
     if not row:
@@ -276,7 +277,35 @@ async def update_account(aid: str, req: Request):
         await webhooks.emit_account(aid, "plan.changed", {"planId": d["planId"]})
     await audit(ACTOR_OF(req), "account.update", account_id=aid, detail={"fields": list(d)})
     warn = await dashboard.follow({"action": "client.rename", "accountId": aid, "accountName": row["name"]}) if d.get("name") else None
+    if old and row["status"] != old["status"]:                             # the dashboard pauses or closes the client's people too
+        warn = await dashboard.follow({"action": "client.status", "accountId": aid, "status": row["status"]}) or warn
     return ok({**shapes.account(dict(row)), **({"dashboardError": warn} if warn else {})})
+
+
+@r.post("/accounts/{aid}/delete")
+async def delete_account(aid: str, req: Request):
+    """P1c: removes a CLOSED client: its sites go, its keys stop, its webhooks end, and the client dashboard deletes the
+    client with its people. The account row stays (hidden), so revenue, usage and the audit log keep their history.
+    If the dashboard can't delete it, nothing changes here."""
+    admin(req)
+    a = await db.pool().fetchrow(f"SELECT status FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
+    if not a:
+        raise ApiError(404, "not_found", "Account not found.")
+    if a["status"] != "closed":
+        raise ApiError(409, "not_closed", "Close the client first (Status: Closed, then Save), then delete it.")
+    if dashboard.configured():
+        try:
+            await dashboard.call({"action": "client.remove", "accountId": aid})
+        except ApiError as e:
+            if e.code != "dashboard_not_found":
+                raise
+    async with db.pool().acquire() as con, con.transaction():
+        await con.execute(f"DELETE FROM {S}.webhooks WHERE site_id IN (SELECT id FROM {S}.sites WHERE account_id = $1)", aid)
+        await con.execute(f"UPDATE {S}.api_keys SET revoked_at = now(), reveal_enc = NULL, reveal_until = NULL WHERE account_id = $1 AND revoked_at IS NULL", aid)
+        await con.execute(f"UPDATE {S}.sites SET deleted_at = now() WHERE account_id = $1 AND deleted_at IS NULL", aid)
+        await con.execute(f"UPDATE {S}.accounts SET deleted_at = now(), updated_at = now() WHERE id = $1", aid)
+    await audit(ACTOR_OF(req), "account.delete", account_id=aid)
+    return ok({"deleted": True})
 
 
 @r.get("/accounts/{aid}/sites")
@@ -289,7 +318,7 @@ async def account_sites(aid: str, req: Request):
 @r.post("/accounts/{aid}/sites")
 async def create_site(aid: str, req: Request):
     admin(req)
-    if not await db.pool().fetchval(f"SELECT 1 FROM {S}.accounts WHERE id = $1", aid):
+    if not await db.pool().fetchval(f"SELECT 1 FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid):
         raise ApiError(404, "not_found", "Account not found.")
     v = await validate.site_fields(await body(req))
     sid = security.new_id("site")

@@ -24,7 +24,9 @@ class App(BaseHTTPRequestHandler):
         signed = hmac.compare_digest(good, self.headers.get("X-Signature", "")) and abs(time.time() - int(ts or 0)) <= 300
         d = json.loads(b)
         GOT.append({"path": self.path, "signed": signed, "d": d})
-        if ANSWER["mode"] == "refuse" or not signed:
+        if ANSWER["mode"] == "missing" and signed:
+            out, code = {"ok": False, "error": {"code": "not_found", "message": "No client in the app for this account."}}, 404
+        elif ANSWER["mode"] == "refuse" or not signed:
             out, code = {"ok": False, "error": {"code": "conflict", "message": "This email already has an account with another client."}}, 409
         else:
             out, code = {"ok": True, "data": {"clientId": "cli_x", "siteId": d.get("siteId"), "hookUrl": "https://app.example.com/api/hooks/marketing",
@@ -126,6 +128,37 @@ async def main():
        and not await live_keys(), (r.text, GOT[-1]))
     r = await c.post(D, headers=ADM, json={})
     ok("T8 a removed site can't be set up: 404", r.status_code == 404, r.text)
+
+    # ---- client status and delete
+    acct = lambda: c.get(f"/admin/v1/accounts/{A}", headers=ADM)
+    ver = (await acct()).json()["data"]["account"]["version"]
+    r = await c.post(f"/admin/v1/accounts/{A}/delete", headers=ADM)
+    ok("T9 an active client can't be deleted: 409 not_closed", r.status_code == 409 and r.json()["error"]["code"] == "not_closed", r.text)
+    n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "status": "suspended"})
+    ok("T10 suspending is followed by the dashboard", r.status_code == 200 and {"action": "client.status", "accountId": A, "status": "suspended"} in [g["d"] for g in GOT[n:]], [g["d"] for g in GOT[n:]])
+    ver = r.json()["data"]["version"]; n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "status": "suspended", "notes": "x"})
+    ok("T10 saving the same status again sends no status change", not [g for g in GOT[n:] if g["d"]["action"] == "client.status"], [g["d"] for g in GOT[n:]])
+    ver = r.json()["data"]["version"]
+    ANSWER["mode"] = "missing"
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "status": "closed"})
+    ok("T10 a client the dashboard doesn't have is not a warning", r.status_code == 200 and "dashboardError" not in r.json()["data"], r.text)
+    ANSWER["mode"] = "refuse"
+    keep = await c.post(f"/admin/v1/accounts/{A}/sites", headers=ADM, json={"name": "Keep", "url": "https://keep.example.com",
+                        "timezone": "Asia/Dubai", "languages": ["en"], "defaultLanguage": "en"})
+    r = await c.post(f"/admin/v1/accounts/{A}/delete", headers=ADM)
+    ok("T11 the dashboard refuses the delete: 502, and the client and its site stay here", r.status_code == 502
+       and (await acct()).status_code == 200 and keep.status_code == 200, r.text)
+    ANSWER["mode"] = "ok"; n = len(GOT)
+    r = await c.post(f"/admin/v1/accounts/{A}/delete", headers=ADM)
+    ok("T12 a closed client is deleted: the dashboard is told (signed)", r.status_code == 200 and GOT[n]["d"] == {"action": "client.remove", "accountId": A} and GOT[n]["signed"], r.text)
+    ok("T12 gone from the list and its page", A not in [x["id"] for x in (await c.get("/admin/v1/accounts", headers=ADM)).json()["data"]]
+       and (await acct()).status_code == 404)
+    left = await p.fetchval(f"SELECT count(*) FROM {S}.sites WHERE account_id = $1 AND deleted_at IS NULL", A)
+    ok("T12 its sites are removed and its row kept for history", left == 0 and await p.fetchval(f"SELECT 1 FROM {S}.accounts WHERE id = $1", A), left)
+    r = await c.post(f"/admin/v1/accounts/{A}/delete", headers=ADM)
+    ok("T12 deleting again: 404", r.status_code == 404, r.text)
 
     await p.execute(f"DELETE FROM {S}.api_keys WHERE account_id = $1", A)
     await p.execute(f"DELETE FROM {S}.webhooks WHERE site_id IN (SELECT id FROM {S}.sites WHERE account_id = $1)", A)

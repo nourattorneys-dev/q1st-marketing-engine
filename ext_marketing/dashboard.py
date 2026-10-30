@@ -81,15 +81,13 @@ async def on_dashboard(sid: str) -> bool:
 
 
 async def follow(payload: dict, sid: str | None = None) -> str | None:
-    """A change the dashboard should follow (a name, a removed site). Returns None when done or not needed, else why not:
-    the engine's own change already stands, so the portal shows this as a warning."""
+    """A change the dashboard should follow (a client's name or status, a removed site). Returns None when done or not
+    needed (a client the dashboard doesn't have is not an error), else why not: the engine's own change already stands, so
+    the portal shows this as a warning."""
     if not configured() or (sid and not await on_dashboard(sid)):
-        return None
-    if not sid and not await db.pool().fetchval(
-            f"SELECT 1 FROM {S}.api_keys WHERE account_id = $1 AND label = $2 AND revoked_at IS NULL", payload["accountId"], KEY_LABEL):
         return None
     try:
         await call(payload)
         return None
     except ApiError as e:
-        return e.message
+        return None if e.code == "dashboard_not_found" else e.message

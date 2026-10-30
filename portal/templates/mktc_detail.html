@@ -77,7 +77,9 @@
       <div class="n-field"><label for="ac-status">{{ T.mc_status }}</label><select class="n-in" id="ac-status" name="status">{% for st in ('active', 'suspended', 'closed') %}<option value="{{ st }}" {% if st == a.status %}selected{% endif %}>{{ T['mc_st_' ~ st] }}</option>{% endfor %}</select></div>
       <div class="n-field"><label for="ac-price">{{ T.mc_price_override }}{{ hint(T.mc_price_override_h) }}</label><input class="n-in" id="ac-price" name="price_override" value="{{ a.priceOverride if a.priceOverride is not none else '' }}" inputmode="decimal" style="width:130px"></div>
       <div class="n-field"><label for="ac-notes">{{ T.mc_notes }}</label><input class="n-in" id="ac-notes" name="notes" value="{{ a.notes or '' }}" style="width:260px"></div>
-      <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_save }}</button></form></div>
+      <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_save }}</button></form>
+    {% if a.status == 'closed' %}<form method="post" action="/marketing-clients/{{ a.id }}/delete" class="n-bd n-row" style="gap:12px;align-items:center;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <span class="n-mut">{{ T.mc_client_delete_h }}</span><button class="n-btn s d" data-confirm="{{ T.mc_client_delete_q }}" data-confirm-kind="danger">{{ T.mc_client_delete }}</button></form>{% endif %}</div>
 
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("social") }}<div><h2>{{ T.mc_sites }}</h2></div></div>
     {% if d.sites %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_site_name }}</th><th>{{ T.mc_category }}</th><th>{{ T.mc_languages }}</th><th>{{ T.mc_conn }}</th><th></th></tr></thead>

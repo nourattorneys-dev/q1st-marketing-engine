@@ -2,6 +2,9 @@
 served by the ext_marketing service). shell.py adds them to its table; an existing key is never replaced."""
 
 EN = {
+    'mc_client_delete': 'Delete client', 'mc_client_delete_h': 'A closed client can be deleted: its sites, keys and dashboard people go; revenue and usage history stay.',
+    'mc_client_delete_q': 'Delete this client? Its sites and keys stop at once, and its people can no longer sign in to the client dashboard. This cannot be undone.',
+    'mc_client_deleted': 'Client deleted.',
     'mc_dash': 'Client dashboard', 'mc_dash_on': 'on dashboard', 'mc_dash_put': 'Put on dashboard', 'mc_dash_refresh': 'Refresh dashboard key',
     'mc_dash_email': 'First Admin email', 'mc_dash_email_h': 'Optional. This person gets an email invitation to sign in to the client dashboard as its Admin.',
     'mc_dash_h': 'Sets the site up on the client dashboard in one step: a new site key and webhook go straight to the dashboard and are never shown. Refreshing replaces the key the dashboard used.',
@@ -78,6 +81,9 @@ EN = {
 }
 
 AR = {
+    'mc_client_delete': 'حذف العميل', 'mc_client_delete_h': 'يمكن حذف العميل المغلق: تُزال مواقعه ومفاتيحه ومستخدموه على لوحة العميل، ويبقى سجل الإيرادات والاستخدام.',
+    'mc_client_delete_q': 'حذف هذا العميل؟ تتوقف مواقعه ومفاتيحه فوراً ولن يتمكن مستخدموه من الدخول إلى لوحة العميل. لا يمكن التراجع عن ذلك.',
+    'mc_client_deleted': 'حُذف العميل.',
     'mc_dash': 'لوحة العميل', 'mc_dash_on': 'على اللوحة', 'mc_dash_put': 'إضافته إلى لوحة العميل', 'mc_dash_refresh': 'تجديد مفتاح اللوحة',
     'mc_dash_email': 'بريد أول مسؤول', 'mc_dash_email_h': 'اختياري. يصل إلى هذا الشخص بريد دعوة للدخول إلى لوحة العميل بصفة مسؤول.',
     'mc_dash_h': 'يجهّز الموقع على لوحة العميل بخطوة واحدة: مفتاح جديد للموقع وعنوان إشعارات يذهبان مباشرة إلى اللوحة ولا يُعرضان. التجديد يستبدل المفتاح الذي تستخدمه اللوحة.',

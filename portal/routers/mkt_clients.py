@@ -258,6 +258,17 @@ async def update_client(aid: str, request: Request):
     return _back(f"{BASE}/{aid}", T, err, data=d)
 
 
+@router.post("/{aid}/delete")
+async def delete_client(aid: str, request: Request):
+    """P1c: only a closed client can be deleted; the service refuses any other with its own message."""
+    user, deny = _gate(request)
+    if deny:
+        return deny
+    T = _T(request, user)
+    _, err = await _api(user, "POST", f"/admin/v1/accounts/{aid}/delete")
+    return _back(f"{BASE}/{aid}" if err else BASE + "/", T, err, "mc_client_deleted")
+
+
 @router.post("/{aid}/sites/new")
 async def new_site(aid: str, request: Request):
     user, deny = _gate(request)
