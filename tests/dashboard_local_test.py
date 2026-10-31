@@ -55,7 +55,7 @@ async def main():
     r = await c.post(D, headers=ADM, json={})
     ok("T1 not set up on this engine: 503 dashboard_off, nothing sent", r.status_code == 503 and r.json()["error"]["code"] == "dashboard_off" and not GOT, r.text)
     det = (await c.get(f"/admin/v1/accounts/{A}", headers=ADM)).json()["data"]
-    ok("T1 detail says the dashboard is off", det["dashboard"] == {"on": False, "sites": []}, det.get("dashboard"))
+    ok("T1 detail says the dashboard is off", {k: det["dashboard"][k] for k in ("on", "sites")} == {"on": False, "sites": []}, det.get("dashboard"))
 
     os.environ["Q1ST_APP_URL"] = APP_URL; os.environ["Q1ST_APP_SECRET"] = SECRET
     r = await c.post(D, headers=ADM, json={"adminEmail": " owner@acme.com "})
@@ -76,7 +76,7 @@ async def main():
        and len(w["events"]) > 0, dict(w) if w else None)
     ok("T2 the key is never in the portal's answer", key not in r.text and g["d"]["webhookSecret"] not in r.text)
     det = (await c.get(f"/admin/v1/accounts/{A}", headers=ADM)).json()["data"]
-    ok("T2 detail lists the site as on the dashboard", det["dashboard"] == {"on": True, "sites": [SID]}, det["dashboard"])
+    ok("T2 detail lists the site as on the dashboard", {k: det["dashboard"][k] for k in ("on", "sites")} == {"on": True, "sites": [SID]}, det["dashboard"])
     aud = await p.fetchval(f"SELECT count(*) FROM {S}.audit_log WHERE action = 'site.dashboard' AND site_id = $1 AND actor = 'staff:tester'", SID)
     ok("T2 audited with the staff user", aud == 1, aud)
 
@@ -153,6 +153,25 @@ async def main():
     ver = r.json()["data"]["version"]
     r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "notes": "no brand fields"})
     ok("B4 a save without brand fields keeps the brand", r.json()["data"]["brand"]["color"] == "#0a3d2a", r.text)
+
+    # ---- the client's own dashboard address
+    ver = r.json()["data"]["version"]
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "dashboardName": "Bad Name"})
+    ok("N1 an address name that isn't one DNS label is refused here", r.status_code == 400 and "dashboardName" in r.json()["error"]["fields"], r.text)
+    n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "dashboardName": "fakher"})
+    sent = [g["d"] for g in GOT[n:]]
+    ok("N2 saved after the dashboard took it, and shown back", r.status_code == 200 and r.json()["data"]["dashboardName"] == "fakher"
+       and any(x.get("action") == "client.rename" and x.get("slug") == "fakher" for x in sent), (r.text, sent))
+    ver = r.json()["data"]["version"]
+    ANSWER["mode"] = "refuse"
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "dashboardName": "taken"})
+    now_name = (await c.get(f"/admin/v1/accounts/{A}", headers=ADM)).json()["data"]["account"]["dashboardName"]
+    ok("N3 a name the dashboard refuses (another client's): the dashboard's reason, and the old name stays", r.status_code == 422 and now_name == "fakher", (r.text, now_name))
+    ANSWER["mode"] = "ok"
+    n = len(GOT)
+    r = await c.put(f"/admin/v1/accounts/{A}", headers=ADM, json={"version": ver, "dashboardName": "fakher", "notes": "same"})
+    ok("N4 the same name again asks the dashboard nothing", r.status_code == 200 and not [g for g in GOT[n:] if g["d"].get("slug")], [g["d"] for g in GOT[n:]])
 
     # ---- client status and delete
     acct = lambda: c.get(f"/admin/v1/accounts/{A}", headers=ADM)

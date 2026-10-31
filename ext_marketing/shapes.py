@@ -33,7 +33,7 @@ async def site(row: dict) -> dict:
 def account(r: dict) -> dict:
     return {"id": r["id"], "name": r["name"], "planId": r["plan_id"], "status": r["status"],
             "priceOverride": r["price_override"], "notes": r["notes"], "createdAt": r["created_at"], "version": r["version"],
-            "brand": brand(r)}
+            "brand": brand(r), "dashboardName": r.get("dashboard_name")}
 
 
 def brand(r: dict) -> dict:

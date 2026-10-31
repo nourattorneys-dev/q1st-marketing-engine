@@ -227,7 +227,8 @@ async def account_detail(aid: str, req: Request):
                "price": a["price_override"] if a["price_override"] is not None else (plan or {}).get("price"),
                "usage": await quotas.effective(aid), "sites": sites,
                "webhooks": {s["id"]: await webhooks.status(s["id"]) for s in sites},
-               "dashboard": {"on": dashboard.configured(), "sites": [s["id"] for s in sites if await dashboard.on_dashboard(s["id"])]},
+               "dashboard": {"on": dashboard.configured(), "sites": [s["id"] for s in sites if await dashboard.on_dashboard(s["id"])],
+                             "domain": (await db.settings(["dashboard_client_domain"])).get("dashboard_client_domain")},
                "overrides": [{"id": x["id"], "metric": x["metric"], "siteId": x["site_id"], "limit": x["limit_value"], "mode": x["mode"],
                               "warnAt": x["warn_at"], "reason": x["reason"], "setBy": x["set_by"], "at": x["created_at"]} for x in ovr],
                "upgradeRequests": [{"id": x["id"], "siteId": x["site_id"], "metric": x["metric"], "note": x["note"], "by": x["requested_by"],
@@ -275,17 +276,30 @@ async def update_account(aid: str, req: Request):
         if logo and (not logo.startswith("https://") or len(logo) > 500):
             f["brandLogoUrl"] = "An https:// address of the logo image"
         brand_in = {"color": color.lower() if color else None, "colorDark": color_dark.lower() if color_dark else None, "logoUrl": logo}
+    name_in = None
+    if "dashboardName" in d:                                            # the client's own dashboard address: <name>.<domain>
+        name_in = (d.get("dashboardName") or "").strip().lower()
+        if name_in and not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", name_in):
+            f["dashboardName"] = "Lowercase letters, digits and hyphens, like fakher"
     if f:
         raise validate.bad(f)
-    old = await db.pool().fetchrow(f"SELECT plan_id, status, brand FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
+    old = await db.pool().fetchrow(f"SELECT name, plan_id, status, brand, dashboard_name FROM {S}.accounts WHERE id = $1 AND deleted_at IS NULL", aid)
+    if old and name_in is not None and name_in != (old["dashboard_name"] or "") and dashboard.configured():
+        # The dashboard decides first (a name another client has, or one kept for the app, is refused); nothing changes here then.
+        try:
+            await dashboard.call({"action": "client.rename", "accountId": aid, "accountName": d.get("name") or old["name"], "slug": name_in or None})
+        except ApiError as e:
+            if e.code != "dashboard_not_found":
+                raise ApiError(422, "dashboard_name", e.message, fields={"dashboardName": e.message})
     old_plan = old["plan_id"] if old else None
     row = await db.pool().fetchrow(
         f"""UPDATE {S}.accounts SET name = coalesce($3, name), plan_id = coalesce($4, plan_id), status = coalesce($5, status),
             price_override = CASE WHEN $6::boolean THEN $7 ELSE price_override END, notes = coalesce($8, notes),
             brand = coalesce($9::jsonb, brand),
+            dashboard_name = CASE WHEN $10::boolean THEN nullif($11, '') ELSE dashboard_name END,
             version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 AND deleted_at IS NULL RETURNING *""",
         aid, int(d.get("version") or 0), d.get("name"), d.get("planId"), d.get("status"),
-        "priceOverride" in d, d.get("priceOverride"), d.get("notes"), brand_in)
+        "priceOverride" in d, d.get("priceOverride"), d.get("notes"), brand_in, name_in is not None, name_in or "")
     if not row:
         raise ApiError(409, "version_conflict", "Account not found or changed meanwhile. Reload.")
     if d.get("planId") and d["planId"] != old_plan:
