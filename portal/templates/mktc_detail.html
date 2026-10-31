@@ -136,17 +136,21 @@
       <div class="n-field"><label for="k-label">{{ T.mc_key_label }}</label><input class="n-in" id="k-label" name="label" style="width:200px"></div>
       <button class="n-btn p">{{ ic("access", 16) }}{{ T.mc_key_new }}</button></form>{% endif %}</div>
 
-  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("settings") }}<div><h2>{{ T.mc_overrides }}{{ hint(T.mc_overrides_h) }}</h2></div></div>
-    {% if d.overrides %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_metric }}</th><th>{{ T.mc_scope }}</th><th>{{ T.mc_limit }}</th><th>{{ T.mc_mode }}</th><th>{{ T.mc_reason }}</th><th></th></tr></thead>
-      {% for o in d.overrides %}<tr><td>{{ o.metric }}</td><td>{{ site_name.get(o.siteId, '—') if o.siteId else T.mc_scope_all }}</td><td class="num">{{ o.limit if o.limit is not none else T.mc_unlimited }}</td>
+  {% set mlabel = {} %}{% for m in metrics or [] %}{% set _ = mlabel.update({m.key: m.label}) %}{% endfor %}
+  {% set mused = {} %}{% for q in (d.usage or {}).quotas or [] %}{% set _ = mused.update({q.metric: q.used}) %}{% endfor %}
+  {% set per = (d.usage or {}).period or {} %}
+  <div class="n-card"><div class="n-hd n-hd-2">{{ ic("settings") }}<div><h2>{{ T.mc_overrides }}{{ hint(T.mc_overrides_h) }}</h2>
+      <div class="n-mut n-sm">{{ T.mc_overrides_sub | replace("{from}", (per.start or '')[:10]) | replace("{to}", (per.end or '')[:10]) }}</div></div></div>
+    {% if d.overrides %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_metric }}</th><th>{{ T.mc_scope }}</th><th>{{ T.mc_used_month }}</th><th>{{ T.mc_limit_month }}</th><th>{{ T.mc_mode }}</th><th>{{ T.mc_reason }}</th><th></th></tr></thead>
+      {% for o in d.overrides %}<tr><td>{{ mlabel.get(o.metric, o.metric) }}</td><td>{{ site_name.get(o.siteId, '—') if o.siteId else T.mc_scope_all }}</td><td class="num">{{ mused.get(o.metric, 0) }}</td><td class="num">{{ o.limit if o.limit is not none else T.mc_unlimited }}</td>
         <td>{{ T.mc_mode_hard if o.mode == 'hard' else T.mc_mode_soft }}</td><td>{{ o.reason or '' }}<div class="n-mut n-sm">{{ o.setBy }} · {{ when(o.at) }}</div></td>
         <td><form method="post" action="/marketing-clients/{{ a.id }}/overrides/{{ o.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="n-btn s d" data-confirm="{{ T.mc_remove_q }}" data-confirm-kind="warn">{{ T.mc_remove }}</button></form></td></tr>{% endfor %}
     </table></div>{% else %}<div class="n-bd n-mut">{{ T.mc_no_overrides }}</div>{% endif %}
     <form method="post" action="/marketing-clients/{{ a.id }}/overrides" class="n-bd n-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;border-top:1px solid var(--line)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="n-field"><label for="o-m">{{ T.mc_metric }}</label><select class="n-in" id="o-m" name="metric">{% for m in metrics or [] %}<option value="{{ m.key }}">{{ m.label }}</option>{% endfor %}</select></div>
       <div class="n-field"><label for="o-s">{{ T.mc_scope }}</label><select class="n-in" id="o-s" name="site_id"><option value="">{{ T.mc_scope_all }}</option>{% for s in d.sites or [] %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div>
-      <div class="n-field"><label for="o-l">{{ T.mc_limit }}{{ hint(T.mc_limit_h) }}</label><input class="n-in" id="o-l" name="limit" inputmode="numeric" placeholder="{{ T.mc_unlimited }}" style="width:110px"></div>
-      <div class="n-field"><label for="o-mo">{{ T.mc_mode }}</label><select class="n-in" id="o-mo" name="mode"><option value="hard">{{ T.mc_mode_hard }}</option><option value="soft">{{ T.mc_mode_soft }}</option></select></div>
+      <div class="n-field"><label for="o-l">{{ T.mc_limit_month }}{{ hint(T.mc_limit_h) }}</label><input class="n-in" id="o-l" name="limit" inputmode="numeric" placeholder="{{ T.mc_unlimited }}" style="width:110px"></div>
+      <div class="n-field"><label for="o-mo">{{ T.mc_mode }}{{ hint(T.mc_mode_h) }}</label><select class="n-in" id="o-mo" name="mode"><option value="hard">{{ T.mc_mode_hard }}</option><option value="soft">{{ T.mc_mode_soft }}</option></select></div>
       <div class="n-field"><label for="o-w">{{ T.mc_warn }}{{ hint(T.mc_warn_h) }}</label><input class="n-in" id="o-w" name="warn_at" inputmode="decimal" style="width:80px"></div>
       <div class="n-field"><label for="o-r">{{ T.mc_reason }}</label><input class="n-in" id="o-r" name="reason" style="width:200px"></div>
       <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_set }}</button></form></div>
