@@ -29,7 +29,9 @@ async def _guarded(c, site_id: str, pid: str) -> dict:
 async def get_publishing(site_id: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
     cfg, ver = await PB.cadence(site_id)
-    return ok({**cfg, "version": ver, "maxPerDay": await PB.daily_cap(c.account_id)})
+    site = await db.pool().fetchrow(f"SELECT timezone FROM {S}.sites WHERE id = $1", site_id)
+    return ok({**cfg, "version": ver, "maxPerDay": await PB.daily_cap(c.account_id),
+               "publishedToday": await PB.published_today(c.account_id, PB.ZoneInfo(site["timezone"] or "UTC"))})
 
 
 @r.put("/sites/{site_id}/settings/publishing")
@@ -40,7 +42,7 @@ async def put_publishing(site_id: str, req: Request):
     if int(d.pop("version", 0) or 0) != ver:
         raise ApiError(409, "version_conflict", "These settings were saved meanwhile. Reload and try again.")
     base = (await db.settings(["publishing_defaults"])).get("publishing_defaults") or {}
-    d.pop("maxPerDay", None)                                            # set by Quantum1st, shown here only
+    d.pop("maxPerDay", None); d.pop("publishedToday", None)            # set by Quantum1st / counted here; shown only
     f = {k: "Unknown setting" for k in sorted(set(d) - set(base))} or PB.check_cadence({**cur, **d})
     cap = await PB.daily_cap(c.account_id)
     if not f and cap is not None and "perDay" in d and isinstance(d["perDay"], int) and d["perDay"] > cap:

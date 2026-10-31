@@ -81,7 +81,7 @@ async def main():
     ok("T11 the account's daily limit (2 articles; a pair is one): the third is refused, nothing goes out",
        r.status_code == 429 and r.json()["error"]["code"] == "daily_cap" and st == "approved", (r.status_code, r.text[:200], st))
     cfg = (await c.get(f"{B}/settings/publishing", headers=K)).json()["data"]
-    ok("T12 the schedule shows the limit", cfg["maxPerDay"] == 2, cfg.get("maxPerDay"))
+    ok("T12 the schedule shows the limit and what was published today", cfg["maxPerDay"] == 2 and cfg["publishedToday"] == 2, cfg)
     r = await c.put(f"{B}/settings/publishing", headers=K, json={"version": cfg["version"], "perDay": 5})
     ok("T13 more a day than the account's limit can't be set", r.status_code == 400 and "perDay" in r.json()["error"]["fields"], r.text[:200])
     from ext_marketing import publishing as PB2
