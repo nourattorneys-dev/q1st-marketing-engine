@@ -140,7 +140,7 @@
   {% set mused = {} %}{% for q in (d.usage or {}).quotas or [] %}{% set _ = mused.update({q.metric: q.used}) %}{% endfor %}
   {% set per = (d.usage or {}).period or {} %}
   <div class="n-card"><div class="n-hd n-hd-2">{{ ic("settings") }}<div><h2>{{ T.mc_overrides }}{{ hint(T.mc_overrides_h) }}</h2>
-      <div class="n-mut n-sm">{{ T.mc_overrides_sub | replace("{from}", (per.start or '')[:10]) | replace("{to}", (per.end or '')[:10]) }}</div></div></div>
+      <div class="n-mut n-sm">{{ T.mc_overrides_sub | replace("{from}", (per.start or '')|string|truncate(10, True, '', 0)) | replace("{to}", (per.end or '')|string|truncate(10, True, '', 0)) }}</div></div></div>
     {% if d.overrides %}<div class="n-twrap"><table class="n-t"><thead><tr><th>{{ T.mc_metric }}</th><th>{{ T.mc_scope }}</th><th>{{ T.mc_used_month }}</th><th>{{ T.mc_limit_month }}</th><th>{{ T.mc_mode }}</th><th>{{ T.mc_reason }}</th><th></th></tr></thead>
       {% for o in d.overrides %}<tr><td>{{ mlabel.get(o.metric, o.metric) }}</td><td>{{ site_name.get(o.siteId, '—') if o.siteId else T.mc_scope_all }}</td><td class="num">{{ mused.get(o.metric, 0) }}</td><td class="num">{{ o.limit if o.limit is not none else T.mc_unlimited }}</td>
         <td>{{ T.mc_mode_hard if o.mode == 'hard' else T.mc_mode_soft }}</td><td>{{ o.reason or '' }}<div class="n-mut n-sm">{{ o.setBy }} · {{ when(o.at) }}</div></td>
