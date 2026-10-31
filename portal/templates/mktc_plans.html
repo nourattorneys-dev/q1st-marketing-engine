@@ -7,7 +7,7 @@
   {% for m in metrics %}{% set x = q.get(m.key) %}<tr><td><input type="checkbox" name="q_{{ m.key }}_on" {% if x %}checked{% endif %} aria-label="{{ m.label }}"></td><td>{{ m.label }}</td>
     <td><input class="n-in" name="q_{{ m.key }}_limit" value="{{ x.limit if x and x.limit is not none else '' }}" inputmode="numeric" style="width:120px" placeholder="{{ T.mc_unlimited }}"></td>
     <td><select class="n-in" name="q_{{ m.key }}_mode"><option value="hard" {% if not x or x.mode == 'hard' %}selected{% endif %}>{{ T.mc_mode_hard }}</option><option value="soft" {% if x and x.mode == 'soft' %}selected{% endif %}>{{ T.mc_mode_soft }}</option></select></td>
-    <td><input class="n-in" name="q_{{ m.key }}_warn" value="{{ x.warnAt if x and x.warnAt is not none else '' }}" inputmode="decimal" style="width:80px"></td></tr>{% endfor %}
+    <td><input class="n-in" name="q_{{ m.key }}_warn" value="{{ ((x.warnAt * 100) | round | int) if x and x.warnAt is not none else '' }}" inputmode="numeric" placeholder="%" style="width:80px"></td></tr>{% endfor %}
   </table></div>{% endmacro %}
 {% block content %}
 <div class="n-content">

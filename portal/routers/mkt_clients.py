@@ -83,6 +83,18 @@ def _back(to, T, err=None, ok_key="mc_saved", data=None):
     return r
 
 
+def _pct(v):
+    """'Warn at' is typed as a percentage of the limit (80 or 80%) and sent as a share (0.8); empty = the default."""
+    v = (v or "").strip().rstrip("%").strip()
+    if v == "":
+        return None
+    try:
+        n = float(v)
+    except ValueError:
+        return v                                                        # the service refuses it with a field message
+    return round(n / 100, 4)
+
+
 def _num(v, kind=float):
     v = (v or "").strip()
     if v == "":
@@ -141,7 +153,7 @@ def _quotas_from_form(f, metrics):
         k = m["key"]
         if f.get(f"q_{k}_on"):
             out.append({"metric": k, "limit": _num(f.get(f"q_{k}_limit"), int), "mode": f.get(f"q_{k}_mode") or "hard",
-                        "warnAt": _num(f.get(f"q_{k}_warn"))})
+                        "warnAt": _pct(f.get(f"q_{k}_warn"))})
     return out
 
 
@@ -376,7 +388,7 @@ async def set_override(aid: str, request: Request):
     f = await _form(request); T = _T(request, user)
     _, err = await _api(user, "PUT", f"/admin/v1/accounts/{aid}/quota-overrides", {
         "metric": f.get("metric"), "siteId": f.get("site_id") or None, "limit": _num(f.get("limit"), int),
-        "mode": f.get("mode") or "hard", "warnAt": _num(f.get("warn_at")), "reason": f.get("reason") or None})
+        "mode": f.get("mode") or "hard", "warnAt": _pct(f.get("warn_at")), "reason": f.get("reason") or None})
     return _back(f"{BASE}/{aid}", T, err, "mc_override_ok")
 
 

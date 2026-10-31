@@ -151,7 +151,7 @@
       <div class="n-field"><label for="o-s">{{ T.mc_scope }}</label><select class="n-in" id="o-s" name="site_id"><option value="">{{ T.mc_scope_all }}</option>{% for s in d.sites or [] %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div>
       <div class="n-field"><label for="o-l">{{ T.mc_limit_month }}{{ hint(T.mc_limit_h) }}</label><input class="n-in" id="o-l" name="limit" inputmode="numeric" placeholder="{{ T.mc_unlimited }}" style="width:110px"></div>
       <div class="n-field"><label for="o-mo">{{ T.mc_mode }}{{ hint(T.mc_mode_h) }}</label><select class="n-in" id="o-mo" name="mode"><option value="hard">{{ T.mc_mode_hard }}</option><option value="soft">{{ T.mc_mode_soft }}</option></select></div>
-      <div class="n-field"><label for="o-w">{{ T.mc_warn }}{{ hint(T.mc_warn_h) }}</label><input class="n-in" id="o-w" name="warn_at" inputmode="decimal" style="width:80px"></div>
+      <div class="n-field"><label for="o-w">{{ T.mc_warn }}{{ hint(T.mc_warn_h) }}</label><input class="n-in" id="o-w" name="warn_at" inputmode="numeric" placeholder="80" style="width:80px"></div>
       <div class="n-field"><label for="o-r">{{ T.mc_reason }}</label><input class="n-in" id="o-r" name="reason" style="width:200px"></div>
       <button class="n-btn p">{{ ic("check", 16) }}{{ T.mc_set }}</button></form></div>
   {% endif %}

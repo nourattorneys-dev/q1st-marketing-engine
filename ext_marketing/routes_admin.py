@@ -37,7 +37,7 @@ async def _quota_rows(items) -> list[dict]:
             f[f"quotas[{i}].limit"] = "Whole number ≥ 0, or null for unlimited"
         w = q.get("warnAt")
         if w is not None and not (isinstance(w, (int, float)) and 0 < w <= 1):
-            f[f"quotas[{i}].warnAt"] = "Between 0 and 1, or null"
+            f[f"quotas[{i}].warnAt"] = "Warn at: a percentage of the limit from 1 to 100, or empty for the default"
         out.append({"metric": m, "limit": lim, "mode": q.get("mode", "hard"), "warnAt": w})
     if f:
         raise validate.bad(f)
