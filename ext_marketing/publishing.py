@@ -170,7 +170,7 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
             "meta_description": p["meta_description"], "keywords": p["keywords"], "category": p.get("section"), "language": p["language"],
             "image_alt": (img or {}).get("alt"), "image_credit": (img or {}).get("credit"),
             "external_id": (p.get("published") or {}).get("externalId") if (p.get("published") or {}).get("target") == t["type"] else None},
-            image=image, status=(t.get("settings") or {}).get("publishAs") or "publish")
+            image=image, status="draft" if (t.get("settings") or {}).get("publishAs") == "draft" else "publish")
     except Exception as e:                                              # noqa: BLE001 - every failure becomes a plain message on the post
         known = isinstance(e, (Failed, website.Refused))
         msg = e.message if known else "The website could not be reached. Try again, or check Settings → Website connection."
