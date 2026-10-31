@@ -34,8 +34,19 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
     img = p.get("image") or None
     twin = None
     if p.get("pair_id"):
-        t = await db.pool().fetchrow(f"SELECT id, language, status FROM {S}.posts WHERE pair_id = $1 AND id <> $2", p["pair_id"], p["id"])
+        t = await db.pool().fetchrow(f"SELECT id, language, status, source_id FROM {S}.posts WHERE pair_id = $1 AND id <> $2", p["pair_id"], p["id"])
         twin = dict(t) if t else None
+    acts = actions(p, ed, kinds)
+    waits = publish_twin = False
+    if twin and await _arabic_mode(site_id) == "translatepress":       # the translation is stored on its source's page
+        if p.get("source_id") == twin["id"] and twin["status"] != "published":
+            waits = True                                                # the source must go live first
+            acts = [a for a in acts if a not in ("publishNow", "retry")]
+        publish_twin = twin.get("source_id") == p["id"] and twin["status"] == "approved"
+    from . import publishing as PB
+    cfg, _ = await PB.cadence(site_id)
+    if twin:
+        twin.pop("source_id", None)
     out = {"id": p["id"], "kind": p["kind"], "platform": p["platform"], "language": p["language"], "pairId": p["pair_id"], "twin": twin,
            "status": p["status"], "topic": p["topic"], "tone": p["tone"], "title": p["title"], "subtitle": p["subtitle"], "slug": p["slug"],
            "metaTitle": p["meta_title"], "metaDescription": p["meta_description"], "keywords": p["keywords"], "hashtags": p["hashtags"],
@@ -46,7 +57,9 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
            "schedule": {"hold": p["hold"], "approvedAt": p.get("approved_at")} if p["status"] in ("approved", "publishing") else None,
            "published": p["published"], "publishedAt": p.get("published_at"), "overrideReason": p.get("override_reason"),
            "requestedBy": p["requested_by"], "reviewedBy": p["reviewed_by"], "createdAt": p["created_at"], "updatedAt": p["updated_at"],
-           "sourceId": p.get("source_id"), "lock": locks.shape(p), "version": p["version"], "actions": actions(p, ed, kinds)}
+           "sourceId": p.get("source_id"), "lock": locks.shape(p), "version": p["version"], "actions": acts,
+           "waitsForSource": waits, "canPublishTwin": publish_twin, "approvedWithCritical": p.get("approved_critical") or 0,
+           "reasonRequired": bool(cfg.get("overrideReasonRequired"))}
     if not full:
         out.pop("content", None)
     else:

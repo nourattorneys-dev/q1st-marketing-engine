@@ -31,8 +31,9 @@ def check_cadence(d: dict) -> dict:
     f = {}
     hm = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
     isint = lambda v, lo: isinstance(v, int) and not isinstance(v, bool) and v >= lo   # noqa: E731
-    if "autoPublish" in d and not isinstance(d["autoPublish"], bool):
-        f["autoPublish"] = "true or false"
+    for k in ("autoPublish", "overrideReasonRequired"):
+        if k in d and not isinstance(d[k], bool):
+            f[k] = "true or false"
     if "perDay" in d and not isint(d["perDay"], 1):
         f["perDay"] = "A whole number, 1 or more"
     if "gapMinutes" in d and not isint(d["gapMinutes"], 0):

@@ -78,15 +78,17 @@ async def _approve(c, site_id: str, pid: str, reason) -> dict:
     crit = [f for f in p["findings"] or [] if f.get("level") == "critical"]
     hard = [f for f in crit if f.get("overridable") is False]
     reason = " ".join(str(reason or "").split())
-    if hard or (crit and not reason):
+    need = bool((await PB.cadence(site_id))[0].get("overrideReasonRequired"))
+    if hard or (crit and need and not reason):
         raise ApiError(422, "framework_blocked",
                        "This post fails a required check that cannot be overridden. Fix it first." if hard else
                        "This post fails a required check. Fix it, or approve with a reason.",
                        findings=[f["message"] for f in (hard or crit)], details={"overridable": not hard})
     row = await db.pool().fetchrow(
         f"""UPDATE {S}.posts SET status = 'approved', approved_at = now(), reviewed_by = $3, override_reason = $4, hold = false,
-               error = NULL, version = version + 1, updated_at = now() WHERE id = $1 AND site_id = $2 AND status = 'pending' RETURNING *""",
-        pid, site_id, c.user, reason if crit else None)
+               approved_critical = $5, error = NULL, version = version + 1, updated_at = now()
+            WHERE id = $1 AND site_id = $2 AND status = 'pending' RETURNING *""",
+        pid, site_id, c.user, (reason or None) if crit else None, len(crit))
     if not row:
         raise ApiError(409, "wrong_status", "The post changed meanwhile. Reload and try again.")
     await audit(c.name, "post.approve", account_id=c.account_id, site_id=site_id, target=pid,
@@ -161,7 +163,7 @@ async def hold(site_id: str, pid: str, req: Request):
     return ok(await posts.shape(await _hold(c, site_id, pid, h), site_id))
 
 
-async def _publish(c, site_id: str, pid: str, section) -> dict:
+async def _publish(c, site_id: str, pid: str, section, with_twin: bool = False) -> dict:
     p = await _guarded(c, site_id, pid)
     kinds = (await db.settings(["publish_kinds"])).get("publish_kinds") or []
     if p["kind"] not in kinds:
@@ -179,13 +181,21 @@ async def _publish(c, site_id: str, pid: str, section) -> dict:
     except PB.Failed as e:
         raise ApiError(502, "publish_failed", e.message)
     await audit(c.name, "post.publish", account_id=c.account_id, site_id=site_id, target=pid, detail={"url": (row["published"] or {}).get("url")})
+    if with_twin:                                                       # its approved translation goes live right after it
+        tw = await db.pool().fetchrow(f"SELECT id FROM {S}.posts WHERE source_id = $1 AND site_id = $2 AND status = 'approved'", pid, site_id)
+        if tw:
+            try:
+                await _publish(c, site_id, tw["id"], None)
+            except ApiError:                                            # the source is live; the translation shows its own error
+                pass
     return row
 
 
 @r.post("/sites/{site_id}/posts/{pid}/publish")
 async def publish_now(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
-    return ok(await posts.shape(await _publish(c, site_id, pid, (await _opt(req)).get("section")), site_id))
+    d = await _opt(req)
+    return ok(await posts.shape(await _publish(c, site_id, pid, d.get("section"), d.get("withTwin") is True), site_id))
 
 
 @r.post("/sites/{site_id}/posts/bulk")
@@ -199,6 +209,9 @@ async def bulk(site_id: str, req: Request):
     if not run or not ids:
         raise validate.bad({**({"action": "One of approve, reject, delete, publishNow, hold, resume"} if not run else {}),
                             **({"ids": "One or more post ids"} if not ids else {})})
+    if d.get("action") == "publishNow":                                 # an English version before its translation
+        src = {r["id"]: r["source_id"] for r in await db.pool().fetch(f"SELECT id, source_id FROM {S}.posts WHERE id = ANY($1)", ids)}
+        ids = sorted(ids, key=lambda i: src.get(i) in ids)
     done, failed = [], []
     for pid in ids:
         try:
