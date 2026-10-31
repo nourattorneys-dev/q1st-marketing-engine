@@ -114,27 +114,67 @@ async def state(site: dict) -> dict:
     conn = await website.row(site["id"])
     queue = [dict(x) for x in await db.pool().fetch(
         f"SELECT * FROM {S}.posts WHERE site_id = $1 AND status IN ('approved','publishing') ORDER BY approved_at, id", site["id"])]
-    srcs = [p["source_id"] for p in queue if p.get("source_id")]
-    src_status = {r["id"]: r["status"] for r in await db.pool().fetch(f"SELECT id, status FROM {S}.posts WHERE id = ANY($1)", srcs)} if srcs else {}
-    paired = (((conn or {}).get("config") or {}).get("arabic") or {}).get("mode") == "translatepress"
+    # An article and its translation are one: the translation goes out with it (never on its own slot), and the article
+    # waits until its translation is approved too.
+    pairs = [p["pair_id"] for p in queue if p.get("pair_id")]
+    mates = {}
+    for r in (await db.pool().fetch(f"SELECT id, pair_id, source_id, status FROM {S}.posts WHERE pair_id = ANY($1)", pairs) if pairs else []):
+        mates.setdefault(r["pair_id"], []).append(dict(r))
+    mate = lambda p: next((m for m in mates.get(p.get("pair_id"), []) if m["id"] != p["id"]), None)   # noqa: E731
+    goes_with = {p["id"] for p in queue if p.get("source_id") and (mate(p) or {}).get("status") != "published"}
+    waits_mate = {p["id"] for p in queue if not p.get("source_id") and mate(p) and mate(p)["status"] not in READY}
+    cap = await daily_cap(site["account_id"])
+    used = await published_today(site["account_id"], tz)
     return {"cfg": cfg, "now": now, "today": int(row["today"] or 0), "last": row["last"], "queue": queue, "kinds": kinds,
             "connected": bool(conn and conn["secret_enc"] and conn["status"] == "ok"),
-            "waitsForSource": {p["id"] for p in queue if paired and p.get("source_id") and src_status.get(p["source_id"]) != "published"}}
+            "waitsForSource": goes_with, "waitsForTranslation": waits_mate, "capLeft": None if cap is None else max(0, cap - used),
+            "cap": cap}
+
+
+# A post that may go out with its pair: approved, already out, or approved and failed while publishing (Retry).
+READY = ("approved", "published", "publishing", "failed")
+
+
+async def daily_cap(account_id: str) -> int | None:
+    """Most articles an account may publish a day (a pair in two languages is one): its own, else the default; None = no cap."""
+    v = await db.pool().fetchval(f"SELECT max_publishes_per_day FROM {S}.accounts WHERE id = $1", account_id)
+    if v is None:
+        v = (await db.settings(["publish_daily_cap_default"])).get("publish_daily_cap_default")
+    return int(v) if v is not None else None
+
+
+async def published_today(account_id: str, tz: ZoneInfo) -> int:
+    """Articles of the account published since midnight in this site's time zone; a translation is part of its article."""
+    day0 = datetime.combine(datetime.now(timezone.utc).astimezone(tz).date(), datetime.min.time(), tz)
+    return int(await db.pool().fetchval(
+        f"""SELECT count(*) FROM {S}.posts p JOIN {S}.sites s ON s.id = p.site_id
+            WHERE s.account_id = $1 AND p.status = 'published' AND p.published_at >= $2 AND p.source_id IS NULL""", account_id, day0) or 0)
+
+
+async def pair(p: dict) -> list[dict]:
+    """The post with its translation (or source), the source first; just the post when it has none."""
+    if not p.get("pair_id"):
+        return [p]
+    rows = [dict(r) for r in await db.pool().fetch(f"SELECT * FROM {S}.posts WHERE pair_id = $1 ORDER BY (source_id IS NOT NULL), created_at", p["pair_id"])]
+    return rows or [p]
 
 
 def plan(site: dict, st: dict) -> tuple[list[dict], str | None, datetime | None]:
     """Queue positions and expected times. Only posts of a publishable kind and not on hold take a slot."""
     takes = [p for p in st["queue"] if p["status"] == "approved" and not p["hold"] and p["kind"] in st["kinds"]
-             and p["id"] not in st.get("waitsForSource", set())]
+             and p["id"] not in st.get("waitsForSource", set()) and p["id"] not in st.get("waitsForTranslation", set())]
     live = st["cfg"].get("autoPublish") and st["connected"]
     times = slots(st["cfg"], site["timezone"], st["now"], st["today"], st["last"], len(takes)) if live else []
     when = {p["id"]: (times[i] if i < len(times) else None) for i, p in enumerate(takes)}
     rows = []
     for i, p in enumerate(st["queue"]):
         why = ("publishing" if p["status"] == "publishing" else "on_hold" if p["hold"] else
-               "no_channel" if p["kind"] not in st["kinds"] else "source_not_published" if p["id"] in st.get("waitsForSource", set()) else None)
+               "no_channel" if p["kind"] not in st["kinds"] else "source_not_published" if p["id"] in st.get("waitsForSource", set())
+               else "translation_not_approved" if p["id"] in st.get("waitsForTranslation", set()) else None)
         rows.append({"post": p, "position": i + 1, "expectedAt": when.get(p["id"]), "waiting": why})
     r = reason(st["cfg"], site["timezone"], st["now"], st["today"], st["last"], len(takes), st["connected"])
+    if r is None and st.get("capLeft") == 0:
+        r = "daily_cap"                                                 # the account's articles for today are out
     nxt = slots(st["cfg"], site["timezone"], st["now"], st["today"], st["last"], 1) if live else []
     return rows, r, (nxt[0] if nxt else None)
 
@@ -194,7 +234,8 @@ async def run(p: dict, *, auto: bool, job_id: str | None = None) -> dict:
                 WHERE site_id = $1 AND lower(phrase) = ANY($2) AND status IN ('new','approved')""",
             site["id"], [k.lower() for k in p["keywords"]])
     await webhooks.set_connection(site["id"], "website", "ok", None)
-    await meter.record(site["account_id"], site["id"], "publishes", 1, job_id=job_id)
+    # An article and its translation are one publish (the plan counts articles).
+    await meter.record(site["account_id"], site["id"], "publishes", 0 if p.get("source_id") else 1, job_id=job_id)
     await webhooks.emit(site["id"], "post.published", {"postId": p["id"], "url": pub["url"], "platform": "website"})
     return dict(row)
 
@@ -240,10 +281,18 @@ async def publish_job(job: dict) -> dict:
     p = await db.pool().fetchrow(f"SELECT * FROM {S}.posts WHERE id = $1", job["payload"]["postId"])
     if not p or p["status"] != "publishing":
         raise jobs.Final("The post is no longer waiting to be published.")
+    auto = bool(job["payload"].get("auto"))
     try:
-        row = await run(dict(p), auto=bool(job["payload"].get("auto")), job_id=job["id"])
+        row = await run(dict(p), auto=auto, job_id=job["id"])
     except Failed as e:
         raise jobs.Final(e.message)                                     # the post shows the error and offers Retry; the job does not repeat it
+    for m in (await pair(dict(row)))[1:]:                               # its translation goes out with it
+        q = await claim(row["site_id"], m["id"]) if m["status"] in ("approved", "failed") else None
+        if q:
+            try:
+                await run(q, auto=auto, job_id=job["id"])
+            except Failed:
+                pass                                                    # the article is out; the translation shows its own error and Retry
     return {"postId": row["id"], "status": "published", "url": (row["published"] or {}).get("url")}
 
 

@@ -44,6 +44,8 @@ async def _draft_input(site: dict, d: dict) -> dict:
     lg = d.get("language") or site["default_language"]
     if lg != "both" and lg not in site["languages"]:
         f["language"] = "One of the site's languages, or both"
+    if kind == "blog" and len(site["languages"] or []) > 1:
+        lg = "both"                                                     # an article is always every site language, published together
     kws = d.get("keywords") or []
     if isinstance(kws, str):
         kws = [k.strip() for k in kws.split(",") if k.strip()]

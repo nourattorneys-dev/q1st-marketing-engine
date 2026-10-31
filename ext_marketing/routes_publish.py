@@ -29,7 +29,7 @@ async def _guarded(c, site_id: str, pid: str) -> dict:
 async def get_publishing(site_id: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
     cfg, ver = await PB.cadence(site_id)
-    return ok({**cfg, "version": ver})
+    return ok({**cfg, "version": ver, "maxPerDay": await PB.daily_cap(c.account_id)})
 
 
 @r.put("/sites/{site_id}/settings/publishing")
@@ -40,7 +40,11 @@ async def put_publishing(site_id: str, req: Request):
     if int(d.pop("version", 0) or 0) != ver:
         raise ApiError(409, "version_conflict", "These settings were saved meanwhile. Reload and try again.")
     base = (await db.settings(["publishing_defaults"])).get("publishing_defaults") or {}
+    d.pop("maxPerDay", None)                                            # set by Quantum1st, shown here only
     f = {k: "Unknown setting" for k in sorted(set(d) - set(base))} or PB.check_cadence({**cur, **d})
+    cap = await PB.daily_cap(c.account_id)
+    if not f and cap is not None and "perDay" in d and isinstance(d["perDay"], int) and d["perDay"] > cap:
+        f = {"perDay": f"At most {cap} a day on this account."}
     if f:
         raise validate.bad(f)
     await db.pool().execute(
@@ -163,7 +167,9 @@ async def hold(site_id: str, pid: str, req: Request):
     return ok(await posts.shape(await _hold(c, site_id, pid, h), site_id))
 
 
-async def _publish(c, site_id: str, pid: str, section, with_twin: bool = False) -> dict:
+async def _publish(c, site_id: str, pid: str, section) -> dict:
+    """Publishes the post with its translation (or source) as one article: the source first, then the translation. Both
+    must be approved; it counts once against the account's articles per day and the plan's publishes."""
     p = await _guarded(c, site_id, pid)
     kinds = (await db.settings(["publish_kinds"])).get("publish_kinds") or []
     if p["kind"] not in kinds:
@@ -172,30 +178,38 @@ async def _publish(c, site_id: str, pid: str, section, with_twin: bool = False) 
         if not isinstance(section, str):
             raise validate.bad({"section": "A website category slug"})
         await db.pool().execute(f"UPDATE {S}.posts SET section = $2 WHERE id = $1 AND status IN ('approved','failed')", pid, section or None)
-    await quotas.check(c.account_id, site_id, {"publishes": 1})
-    q = await PB.claim(site_id, pid)
-    if not q:
-        raise ApiError(409, "wrong_status", f"Only an approved post, or one whose publishing failed, can be published (this one is {p['status']}).")
-    try:
-        row = await PB.run(q, auto=False)
-    except PB.Failed as e:
-        raise ApiError(502, "publish_failed", e.message)
-    await audit(c.name, "post.publish", account_id=c.account_id, site_id=site_id, target=pid, detail={"url": (row["published"] or {}).get("url")})
-    if with_twin:                                                       # its approved translation goes live right after it
-        tw = await db.pool().fetchrow(f"SELECT id FROM {S}.posts WHERE source_id = $1 AND site_id = $2 AND status = 'approved'", pid, site_id)
-        if tw:
-            try:
-                await _publish(c, site_id, tw["id"], None)
-            except ApiError:                                            # the source is live; the translation shows its own error
-                pass
-    return row
+    members = await PB.pair(dict(p))
+    todo = [m for m in members if m["status"] != "published"]
+    for m in members:
+        if m["id"] != pid and m["status"] not in PB.READY:
+            raise ApiError(409, "pair_not_ready", f"Approve the {m['language'].upper()} version too: an article and its translation are published together.",
+                           details={"postId": m["id"], "language": m["language"]})
+    new_article = any(not m.get("source_id") for m in todo)
+    site = await db.pool().fetchrow(f"SELECT timezone FROM {S}.sites WHERE id = $1", site_id)
+    cap = await PB.daily_cap(c.account_id)
+    if new_article and cap is not None and await PB.published_today(c.account_id, PB.ZoneInfo(site["timezone"] or "UTC")) >= cap:
+        raise ApiError(429, "daily_cap", f"Today's {cap} articles are already published. It goes out tomorrow, or ask Quantum1st to raise the daily limit.")
+    if new_article:
+        await quotas.check(c.account_id, site_id, {"publishes": 1})
+    out = None
+    for m in todo:
+        q = await PB.claim(site_id, m["id"])
+        if not q:
+            raise ApiError(409, "wrong_status", f"Only an approved post, or one whose publishing failed, can be published (this one is {m['status']}).")
+        try:
+            row = await PB.run(q, auto=False)
+        except PB.Failed as e:
+            raise ApiError(502, "publish_failed", e.message)
+        await audit(c.name, "post.publish", account_id=c.account_id, site_id=site_id, target=m["id"], detail={"url": (row["published"] or {}).get("url")})
+        if m["id"] == pid:
+            out = row
+    return out or dict(await db.pool().fetchrow(f"SELECT * FROM {S}.posts WHERE id = $1", pid))
 
 
 @r.post("/sites/{site_id}/posts/{pid}/publish")
 async def publish_now(site_id: str, pid: str, req: Request):
     c = await caller(req); await site_of(c, site_id)
-    d = await _opt(req)
-    return ok(await posts.shape(await _publish(c, site_id, pid, d.get("section"), d.get("withTwin") is True), site_id))
+    return ok(await posts.shape(await _publish(c, site_id, pid, (await _opt(req)).get("section")), site_id))
 
 
 @r.post("/sites/{site_id}/posts/bulk")
@@ -213,6 +227,14 @@ async def bulk(site_id: str, req: Request):
         src = {r["id"]: r["source_id"] for r in await db.pool().fetch(f"SELECT id, source_id FROM {S}.posts WHERE id = ANY($1)", ids)}
         ids = sorted(ids, key=lambda i: src.get(i) in ids)
     done, failed = [], []
+    if d.get("action") == "publishNow":                                 # a pair goes out once, whichever of the two was picked
+        seen, kept = set(), []
+        for pid in ids:
+            pr = await db.pool().fetchval(f"SELECT pair_id FROM {S}.posts WHERE id = $1", pid)
+            if pr and pr in seen:
+                done.append(pid); continue
+            seen.add(pr); kept.append(pid)
+        ids = kept
     for pid in ids:
         try:
             await run(pid)

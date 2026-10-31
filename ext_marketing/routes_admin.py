@@ -276,6 +276,15 @@ async def update_account(aid: str, req: Request):
         if logo and (not logo.startswith("https://") or len(logo) > 500):
             f["brandLogoUrl"] = "An https:// address of the logo image"
         brand_in = {"color": color.lower() if color else None, "colorDark": color_dark.lower() if color_dark else None, "logoUrl": logo}
+    cap_in = "keep"
+    if "maxPublishesPerDay" in d:                                       # articles a day for the whole account; empty = the default
+        v = d.get("maxPublishesPerDay")
+        if v in (None, ""):
+            cap_in = None
+        elif isinstance(v, int) and not isinstance(v, bool) and v >= 0 or (isinstance(v, str) and v.strip().isdigit()):
+            cap_in = int(v)
+        else:
+            f["maxPublishesPerDay"] = "A whole number, 0 or more (empty = the default)"
     name_in = None
     if "dashboardName" in d:                                            # the client's own dashboard address: <name>.<domain>
         name_in = (d.get("dashboardName") or "").strip().lower()
@@ -297,9 +306,11 @@ async def update_account(aid: str, req: Request):
             price_override = CASE WHEN $6::boolean THEN $7 ELSE price_override END, notes = coalesce($8, notes),
             brand = coalesce($9::jsonb, brand),
             dashboard_name = CASE WHEN $10::boolean THEN nullif($11, '') ELSE dashboard_name END,
+            max_publishes_per_day = CASE WHEN $12::boolean THEN $13::int ELSE max_publishes_per_day END,
             version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 AND deleted_at IS NULL RETURNING *""",
         aid, int(d.get("version") or 0), d.get("name"), d.get("planId"), d.get("status"),
-        "priceOverride" in d, d.get("priceOverride"), d.get("notes"), brand_in, name_in is not None, name_in or "")
+        "priceOverride" in d, d.get("priceOverride"), d.get("notes"), brand_in, name_in is not None, name_in or "",
+        cap_in != "keep", None if cap_in == "keep" else cap_in)
     if not row:
         raise ApiError(409, "version_conflict", "Account not found or changed meanwhile. Reload.")
     if d.get("planId") and d["planId"] != old_plan:

@@ -15,6 +15,7 @@ def ok(name, cond, got=""):
     print(("PASS " if cond else "FAIL "), name, "" if cond else f"(got {got})"); P += bool(cond); F += not cond
 
 SENT = []
+RUN = uuid.uuid4().hex[:6]
 async def fake_run(p, *, auto, job_id=None):
     SENT.append(p["id"])
     pub = {"target": "wordpress", "url": f"https://example.com/{p['id']}/", "externalId": str(len(SENT)), "at": datetime.now(timezone.utc).isoformat(), "status": "publish"}
@@ -57,32 +58,45 @@ async def main():
     r = await c.post(f"{B}/posts/{b}/approve", headers=K, json={"overrideReason": "Checked by the lawyer"})
     ok("T5 ... and accepted with a reason", r.status_code == 200 and r.json()["data"]["overrideReason"] == "Checked by the lawyer", r.text[:200])
 
-    pair = "pr_" + uuid.uuid4().hex[:8]
-    en = await post("approved", pair=pair)
-    ar = await post("approved", "ar", pair=pair, source=en)
-    d = (await c.get(f"{B}/posts/{ar}", headers=K)).json()["data"]
-    ok("T6 an Arabic translation whose English page isn't live can't be published now, and says why", "publishNow" not in d["actions"] and d["waitsForSource"] is True, (d["actions"], d["waitsForSource"]))
+    # ---- an article and its translation are one: published together, counted once
+    await p.execute(f"UPDATE {S}.accounts SET max_publishes_per_day = 2 WHERE id = $1", acc["id"])
+    en = await post("approved", pair=RUN + "pr1"); ar = await post("pending", "ar", pair=RUN + "pr1", source=en)
     d = (await c.get(f"{B}/posts/{en}", headers=K)).json()["data"]
-    ok("T7 its English version offers to take the approved translation along", d["canPublishTwin"] is True and "publishNow" in d["actions"], d.get("canPublishTwin"))
-    r = await c.post(f"{B}/posts/{en}/publish", headers=K, json={"withTwin": True})
-    st = await p.fetchval(f"SELECT status FROM {S}.posts WHERE id = $1", ar)
-    ok("T8 publishing the English one with its translation puts both live, English first", r.status_code == 200 and st == "published" and SENT[-2:] == [en, ar], (r.status_code, st, SENT))
-
-    en2 = await post("approved", pair="pr2"); ar2 = await post("approved", "ar", pair="pr2", source=en2)
-    await c.post(f"{B}/posts/{en2}/publish", headers=K, json={})
-    st = await p.fetchval(f"SELECT status FROM {S}.posts WHERE id = $1", ar2)
-    d = (await c.get(f"{B}/posts/{ar2}", headers=K)).json()["data"]
-    ok("T9 without 'take it along' only the English one goes; the translation can then be published on its own", st == "approved" and "publishNow" in d["actions"] and not d["waitsForSource"], (st, d["actions"]))
-    await p.execute(f"UPDATE {S}.site_connections SET config = config || '{{\"arabic\": {{\"mode\": \"separate\"}}}}'::jsonb WHERE site_id = $1", site["id"])
-    en3 = await post("approved", pair="pr3"); ar3 = await post("approved", "ar", pair="pr3", source=en3)
-    d = (await c.get(f"{B}/posts/{ar3}", headers=K)).json()["data"]
-    ok("T10 where Arabic is a separate post, it never waits for the English one", "publishNow" in d["actions"] and not d["waitsForSource"], d["actions"])
-
-    en4 = await post("approved", pair="pr4"); ar4 = await post("approved", "ar", pair="pr4", source=en4)
-    await p.execute(f"UPDATE {S}.site_connections SET config = config || '{{\"arabic\": {{\"mode\": \"translatepress\"}}}}'::jsonb WHERE site_id = $1", site["id"])
+    ok("T6 while the translation isn't approved, the article can't go out, and says which one to approve",
+       "publishNow" not in d["actions"] and d["waitsFor"] == {"id": ar, "language": "ar"}, (d["actions"], d.get("waitsFor")))
+    r = await c.post(f"{B}/posts/{en}/publish", headers=K, json={})
+    ok("T7 ... publishing it anyway is refused (pair_not_ready)", r.status_code == 409 and r.json()["error"]["code"] == "pair_not_ready", r.text[:200])
+    await p.execute(f"UPDATE {S}.posts SET status = 'approved', approved_at = now() WHERE id = $1", ar)
+    r = await c.post(f"{B}/posts/{ar}/publish", headers=K, json={})
+    st = await p.fetchval(f"SELECT status FROM {S}.posts WHERE id = $1", en)
+    ok("T8 publishing either one sends both, the English (source) first", r.status_code == 200 and st == "published" and SENT[-2:] == [en, ar], (r.status_code, st, SENT[-2:]))
+    en4 = await post("approved", pair=RUN + "pr4"); ar4 = await post("approved", "ar", pair=RUN + "pr4", source=en4)
     r = await c.post(f"{B}/posts/bulk", headers=K, json={"action": "publishNow", "ids": [ar4, en4]})
-    ok("T11 publishing both in one go sends the English version first, whatever order they were picked in",
+    ok("T10 both picked in bulk: one article, English first, nothing fails",
        r.json()["data"]["failed"] == [] and SENT[-2:] == [en4, ar4], (r.json()["data"], SENT[-2:]))
+
+    en5 = await post("approved", pair=RUN + "pr5"); ar5 = await post("approved", "ar", pair=RUN + "pr5", source=en5)
+    r = await c.post(f"{B}/posts/{en5}/publish", headers=K, json={})
+    st = await p.fetchval(f"SELECT status FROM {S}.posts WHERE id = $1", ar5)
+    ok("T11 the account's daily limit (2 articles; a pair is one): the third is refused, nothing goes out",
+       r.status_code == 429 and r.json()["error"]["code"] == "daily_cap" and st == "approved", (r.status_code, r.text[:200], st))
+    cfg = (await c.get(f"{B}/settings/publishing", headers=K)).json()["data"]
+    ok("T12 the schedule shows the limit", cfg["maxPerDay"] == 2, cfg.get("maxPerDay"))
+    r = await c.put(f"{B}/settings/publishing", headers=K, json={"version": cfg["version"], "perDay": 5})
+    ok("T13 more a day than the account's limit can't be set", r.status_code == 400 and "perDay" in r.json()["error"]["fields"], r.text[:200])
+    from ext_marketing import publishing as PB2
+    rows, why, _ = PB2.plan(dict(await p.fetchrow(f"SELECT * FROM {S}.sites WHERE id = $1", site["id"])),
+                            await PB2.state(dict(await p.fetchrow(f"SELECT * FROM {S}.sites WHERE id = $1", site["id"]))))
+    w = {x["post"]["id"]: x["waiting"] for x in rows}
+    ok("T14 the scheduler: the translation goes with its article, never on its own slot", w.get(ar5) == "source_not_published", w)
+    await p.execute(f"UPDATE {S}.accounts SET max_publishes_per_day = NULL WHERE id = $1", acc["id"])
+    await p.execute(f"UPDATE {S}.settings SET value = 'null'::jsonb WHERE key = 'publish_daily_cap_default'")
+    en6 = await post("approved", pair=RUN + "pr6"); ar6 = await post("approved", "ar", pair=RUN + "pr6", source=en6)
+    await PB2.claim(site["id"], en6)
+    await PB2.publish_job({"id": "job_t", "payload": {"postId": en6, "auto": True}})
+    st = await p.fetchval(f"SELECT status FROM {S}.posts WHERE id = $1", ar6)
+    ok("T15 an automatic publish sends the article and then its translation", st == "published" and SENT[-2:] == [en6, ar6], (st, SENT[-2:]))
+    await p.execute(f"UPDATE {S}.settings SET value = '3'::jsonb WHERE key = 'publish_daily_cap_default'")
 
     await p.execute(f"DELETE FROM {S}.api_keys WHERE account_id = $1", acc["id"])
     print(f"\n{P} passed, {F} failed"); sys.exit(1 if F else 0)

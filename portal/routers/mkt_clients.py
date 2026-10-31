@@ -256,7 +256,7 @@ async def update_client(aid: str, request: Request):
         "version": _num(f.get("version"), int), "name": f.get("name"), "planId": f.get("plan_id") or None,
         "status": f.get("status"), "priceOverride": _num(f.get("price_override")), "notes": f.get("notes"),
         "brandColor": f.get("brand_color"), "brandColorDark": f.get("brand_color_dark"), "brandLogoUrl": f.get("brand_logo"),
-        "dashboardName": f.get("dashboard_name")})
+        "dashboardName": f.get("dashboard_name"), "maxPublishesPerDay": (f.get("max_per_day") or "").strip() or None})
     return _back(f"{BASE}/{aid}", T, err, data=d)
 
 

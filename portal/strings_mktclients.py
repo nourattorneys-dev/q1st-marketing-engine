@@ -2,6 +2,7 @@
 served by the ext_marketing service). shell.py adds them to its table; an existing key is never replaced."""
 
 EN = {
+    'mc_max_per_day': 'Articles a day', 'mc_max_per_day_h': 'The most articles this client may publish a day, on all its sites together. An article with its translation counts once. Automatic and manual publishing both stop there. Empty = the default in Settings.', 'mc_default': 'Default',
     'mc_dash_name': 'Dashboard address', 'mc_dash_name_h': 'The client\'s own address for their dashboard. Lowercase letters, digits and hyphens. Their people open it to sign in; one sign-in works for every client a person works for. Empty = the shared address.',
     'mc_brand_logo': 'Logo on their dashboard', 'mc_brand_logo_h': 'The https:// address of the client\'s logo image (PNG, JPEG, WebP or SVG), e.g. from their website. The dashboard keeps its own copy. Empty = the Quantum1st mark.',
     'mc_brand_color': 'Main colour, light mode', 'mc_brand_color_dark': 'Main colour, dark mode', 'mc_brand_color_h': 'Buttons, links and the chosen page on the client\'s dashboard use this colour. Pick it or type a hex code like #1F4FD1. Empty = Quantum1st blue.',
@@ -84,6 +85,7 @@ EN = {
 }
 
 AR = {
+    'mc_max_per_day': 'المقالات يوميًا', 'mc_max_per_day_h': 'أقصى عدد من المقالات ينشره هذا العميل يوميًا في كل مواقعه معًا. المقال مع ترجمته يُحسب مرة واحدة. يتوقف النشر التلقائي واليدوي عند هذا الحد. فارغ = القيمة الافتراضية في الإعدادات.', 'mc_default': 'افتراضي',
     'mc_dash_name': 'عنوان اللوحة', 'mc_dash_name_h': 'العنوان الخاص بلوحة العميل. أحرف إنجليزية صغيرة وأرقام وشرطات. يفتحه موظفو العميل لتسجيل الدخول؛ تسجيل دخول واحد يكفي لكل العملاء الذين يعمل لديهم الشخص. فارغ = العنوان المشترك.',
     'mc_brand_logo': 'الشعار على لوحتهم', 'mc_brand_logo_h': 'عنوان https:// لصورة شعار العميل (PNG أو JPEG أو WebP أو SVG)، مثلاً من موقعه. تحتفظ اللوحة بنسختها. فارغ = شعار Quantum1st.',
     'mc_brand_color': 'اللون الرئيسي، الوضع الفاتح', 'mc_brand_color_dark': 'اللون الرئيسي، الوضع الداكن', 'mc_brand_color_h': 'تستخدم أزرار لوحة العميل وروابطها والصفحة المختارة هذا اللون. اختره أو اكتب رمزه مثل #1F4FD1. فارغ = أزرق Quantum1st.',

@@ -37,13 +37,12 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
         t = await db.pool().fetchrow(f"SELECT id, language, status, source_id FROM {S}.posts WHERE pair_id = $1 AND id <> $2", p["pair_id"], p["id"])
         twin = dict(t) if t else None
     acts = actions(p, ed, kinds)
-    waits = publish_twin = False
-    if twin and await _arabic_mode(site_id) == "translatepress":       # the translation is stored on its source's page
-        if p.get("source_id") == twin["id"] and twin["status"] != "published":
-            waits = True                                                # the source must go live first
-            acts = [a for a in acts if a not in ("publishNow", "retry")]
-        publish_twin = twin.get("source_id") == p["id"] and twin["status"] == "approved"
     from . import publishing as PB
+    # An article and its translation are published together: until the other one is approved, neither can go out.
+    waits_for = None
+    if twin and twin["status"] not in PB.READY and p["status"] in ("approved", "failed"):
+        waits_for = {"id": twin["id"], "language": twin["language"]}
+        acts = [a for a in acts if a not in ("publishNow", "retry")]
     cfg, _ = await PB.cadence(site_id)
     if twin:
         twin.pop("source_id", None)
@@ -58,7 +57,7 @@ async def shape(p: dict, site_id: str, *, full: bool = True) -> dict:
            "published": p["published"], "publishedAt": p.get("published_at"), "overrideReason": p.get("override_reason"),
            "requestedBy": p["requested_by"], "reviewedBy": p["reviewed_by"], "createdAt": p["created_at"], "updatedAt": p["updated_at"],
            "sourceId": p.get("source_id"), "lock": locks.shape(p), "version": p["version"], "actions": acts,
-           "waitsForSource": waits, "canPublishTwin": publish_twin, "approvedWithCritical": p.get("approved_critical") or 0,
+           "waitsFor": waits_for, "approvedWithCritical": p.get("approved_critical") or 0,
            "reasonRequired": bool(cfg.get("overrideReasonRequired"))}
     if not full:
         out.pop("content", None)
