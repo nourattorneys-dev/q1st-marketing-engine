@@ -17,7 +17,7 @@ class Refused(Exception):
 def _strapi_cfg(t: dict) -> dict:
     s, learned = t.get("settings") or {}, t.get("learned") or {}
     return {**s, "fieldMap": t.get("fieldMap") or {}, "locales": t.get("languages") or [],
-            "fieldKinds": learned.get("fieldKinds") or {}, "strapiVersion": learned.get("strapiVersion")}
+            "fieldKinds": learned.get("fieldKinds") or {}, "strapiVersion": learned.get("strapiVersion"), "schema": learned.get("schema")}
 
 
 async def _strapi_test(t: dict, secret: str) -> dict:
@@ -27,7 +27,7 @@ async def _strapi_test(t: dict, secret: str) -> dict:
         raise Refused(e.message, e.field)
     return {"categories": r["categories"], "languages": r["locales"], "fields": r["fields"], "blockTypes": [],
             "suggestedFieldMap": r["suggestedFieldMap"], "note": r.get("note"),
-            "learned": {"fieldKinds": r["fieldKinds"], "strapiVersion": r["strapiVersion"]}}
+            "learned": {"fieldKinds": r["fieldKinds"], "strapiVersion": r["strapiVersion"], "schema": r.get("schema")}}
 
 
 async def _strapi_categories(t: dict, secret: str) -> list:

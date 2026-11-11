@@ -3,6 +3,7 @@ the site's collection, locales and field map are its settings, the field-name hi
 Safety: a client gives us an address and we call it, so every call checks the address (https, public IP only)."""
 from __future__ import annotations
 import asyncio, html as _html, ipaddress, re, socket
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
@@ -107,17 +108,73 @@ def _kind(v) -> str:
     return type(v).__name__
 
 
+# ---------------------------------------------------------------- the site's own field definitions (when the token may read them)
+_TYPE_KIND = {"string": "text", "text": "text", "uid": "text", "email": "text", "richtext": "text", "blocks": "blocks",
+              "media": "media", "relation": "relation", "enumeration": "enum", "date": "date", "datetime": "datetime",
+              "integer": "number", "biginteger": "number", "decimal": "number", "float": "number", "boolean": "boolean", "json": "json"}
+
+
+async def _schema(c: httpx.AsyncClient, coll: str) -> dict | None:
+    """{field path: {kind, required, enum?, maxLength?, localized}} from Strapi's content-type builder, single components
+    opened into 'component.field'. None when the token may not read the definitions: then fields are learned from entries."""
+    r = await c.get("/api/content-type-builder/content-types")
+    if r.status_code >= 400:
+        return None
+    ct = next((x for x in (r.json() or {}).get("data") or [] if (x.get("schema") or {}).get("pluralName") == coll), None)
+    if not ct:
+        return None
+    out: dict = {}
+
+    async def walk(attrs: dict, prefix: str, parent_localized: bool | None):
+        for name, a in (attrs or {}).items():
+            loc = ((a.get("pluginOptions") or {}).get("i18n") or {}).get("localized")
+            loc = parent_localized if loc is None else loc
+            if a.get("type") == "component" and not a.get("repeatable"):
+                rc = await c.get(f"/api/content-type-builder/components/{a.get('component')}")
+                if rc.status_code < 400:
+                    await walk(((rc.json() or {}).get("data") or {}).get("schema", {}).get("attributes") or {}, f"{prefix}{name}.", loc)
+                continue
+            f = {"kind": _TYPE_KIND.get(a.get("type"), a.get("type") or "unknown"), "required": bool(a.get("required")),
+                 "localized": bool(loc)}
+            if a.get("enum"): f["enum"] = list(a["enum"])
+            if a.get("maxLength"): f["maxLength"] = int(a["maxLength"])
+            out[prefix + name] = f
+    await walk((ct.get("schema") or {}).get("attributes") or {}, "", None)
+    return out
+
+
+AUTO_DATE = "date"                     # our field whose value is the moment of publishing
+
+
+def unmapped_required(schema: dict | None, field_map: dict, fixed: dict | None = None) -> list[str]:
+    """Required website fields nothing fills: not mapped, not a fixed value, not the slug Strapi derives itself."""
+    taken = set((field_map or {}).values()) | set((fixed or {}).keys())
+    return sorted(f for f, d in (schema or {}).items() if d.get("required") and f not in taken )
+
+
+def _fit(text: str, n: int | None) -> str:
+    """Shortens to the field's length limit at a sentence end, else at a word end (never mid-word)."""
+    if not n or not isinstance(text, str) or len(text) <= n:
+        return text
+    cut = text[:n]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind("。"))
+    if end >= n // 2:
+        return cut[:end + 1].strip()
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp > 0 else cut).rstrip(" ,;:-–—")
+
+
 def _tokens(name: str) -> list[str]:
     """'seo.metaTitle' -> ['seo','meta','title']; 'url_slug' -> ['url','slug']; 'mainImage' -> ['main','image']."""
     return [t.lower() for t in re.findall(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])", name)]
 
 
-async def suggest_map(fields: dict) -> dict:
+async def suggest_map(fields: dict, required: set | None = None) -> dict:
     """Our field -> the site's field, scored over ALL pairs at once: an exact name scores highest; otherwise a field whose
     name parts contain every part of a hint scores by how much of its name the hint covers (seoTitle fits 'seo.title'
     fully, so it becomes the meta title and not the article title). Best pairs are taken first; kinds must fit."""
     syn = (await db.settings(["strapi_field_synonyms"])).get("strapi_field_synonyms") or {}
-    want_kind = {"image": ("media",), "category": ("relation",), "author": ("relation",),
+    want_kind = {"image": ("media",), "category": ("relation", "enum"), "author": ("relation",), AUTO_DATE: ("date", "datetime"),
                  "body": ("text", "blocks"), "title": ("text",), "subtitle": ("text",), "slug": ("text",)}
     cand = []
     for ours, names in syn.items():
@@ -138,6 +195,13 @@ async def suggest_map(fields: dict) -> dict:
     for _s, _o, _l, ours, f in sorted(cand):
         if ours not in out and f not in used:
             out[ours] = f; used.add(f)
+    # By type when no name matched: the first required date gets the publish date, the first required list of allowed
+    # values the category (only from the site's own definitions, so a guess never lands on a site without them).
+    for ours, kinds in ((AUTO_DATE, ("date", "datetime")), ("category", ("enum",))):
+        if ours not in out and required:
+            f = next((f for f in sorted(fields) if fields[f] in kinds and f in required and f not in used), None)
+            if f:
+                out[ours] = f; used.add(f)
     return out
 
 
@@ -161,10 +225,28 @@ async def test(cfg: dict, token: str) -> dict:
         rl = await c.get("/api/i18n/locales")
         if rl.status_code < 400 and isinstance(rl.json(), list):
             locales = [x.get("code") for x in rl.json() if x.get("code")]
-        cats = await _categories(c, cfg, ver) if cfg.get("categoryCollection") else []
+        schema = await _schema(c, coll)
+        if schema:                                                     # the site's definitions win over what entries show
+            fields = {f: d["kind"] for f, d in schema.items()}
+        required = {f for f, d in (schema or {}).items() if d.get("required")}
+        suggested = await suggest_map(fields, required)
+        cmap = {**suggested, **(cfg.get("fieldMap") or {})}
+        cats = await _categories(c, cfg, ver) if cfg.get("categoryCollection") else _enum_categories(schema, cmap)
+    notes = []
+    if not rows and not schema:
+        notes.append(f"No entries in {coll} yet: add one article in Strapi so the fields can be read.")
+    missing = unmapped_required(schema, cmap, (cfg.get("fixedFields") or {}))
+    if missing:
+        notes.append("Required on the website but not filled: " + ", ".join(missing) + ". Map them below, or the website refuses the article.")
     return {"ok": True, "strapiVersion": ver, "sampled": len(rows), "fields": sorted(fields), "fieldKinds": fields,
-            "suggestedFieldMap": await suggest_map(fields), "locales": locales, "categories": cats,
-            "note": None if rows else f"No entries in {coll} yet: add one article in Strapi so the fields can be read."}
+            "schema": schema, "suggestedFieldMap": suggested, "locales": locales, "categories": cats,
+            "note": " ".join(notes) or None}
+
+
+def _enum_categories(schema: dict | None, fmap: dict) -> list[dict]:
+    """A category field that is a list of allowed values: those values are the site's categories."""
+    d = (schema or {}).get((fmap or {}).get("category") or "") or {}
+    return [{"slug": v, "name": v.replace("-", " ").replace("_", " ").capitalize()} for v in d.get("enum") or []]
 
 
 async def _categories(c: httpx.AsyncClient, cfg: dict, ver: int) -> list[dict]:
@@ -179,7 +261,7 @@ async def _categories(c: httpx.AsyncClient, cfg: dict, ver: int) -> list[dict]:
 
 async def categories(cfg: dict, token: str) -> list[dict]:
     if not cfg.get("categoryCollection"):
-        return []
+        return _enum_categories(cfg.get("schema"), cfg.get("fieldMap"))
     async with await _client(cfg["url"], token) as c:
         return [{"slug": x["slug"], "name": x["name"]} for x in await _categories(c, cfg, int(cfg.get("strapiVersion") or 5))]
 
@@ -277,13 +359,25 @@ async def publish(cfg: dict, token: str, post: dict, image: tuple[bytes, str, st
                   "metaDescription": post.get("meta_description"),
                   "body": html_to_blocks(body) if kinds.get(fm["body"]) == "blocks" else body,
                   "keywords": ", ".join(post.get("keywords") or []) if kinds.get(fm.get("keywords", ""), "text") == "text" else (post.get("keywords") or [])}
+        if fm.get(AUTO_DATE):
+            now = datetime.now(timezone.utc)
+            values[AUTO_DATE] = now.date().isoformat() if kinds.get(fm[AUTO_DATE]) == "date" else now.isoformat()
+        limits = {f: d.get("maxLength") for f, d in (cfg.get("schema") or {}).items() if d.get("maxLength")}
         for ours, v in values.items():
             if fm.get(ours) and v not in (None, ""):
-                _set(data, fm[ours], v)
+                _set(data, fm[ours], _fit(v, limits.get(fm[ours])))
         if fm.get("slug"):
             base = re.sub(r"[^a-z0-9]+", "-", (post.get("slug") or post.get("title") or "post").lower()).strip("-")[:80] or "post"
             _set(data, fm["slug"], await _slug_free(c, coll, fm["slug"], base, locale, ver, post.get("document_id")))
-        if fm.get("category") and (post.get("category") or cfg.get("defaultCategory")) and cfg.get("categoryCollection"):
+        if fm.get("category") and kinds.get(fm["category"]) == "enum":
+            want = post.get("category") or cfg.get("defaultCategory")
+            allowed = ((cfg.get("schema") or {}).get(fm["category"]) or {}).get("enum") or []
+            if want and (not allowed or want in allowed):
+                _set(data, fm["category"], want)
+            elif allowed:
+                raise StrapiError("Choose the article's category before publishing (one of: " + ", ".join(allowed) + "), "
+                                  "or set a default category in Settings → Website connection.", "category")
+        elif fm.get("category") and (post.get("category") or cfg.get("defaultCategory")) and cfg.get("categoryCollection"):
             want = post.get("category") or cfg.get("defaultCategory")
             ref = next((x["ref"] for x in await _categories(c, cfg, ver) if x["slug"] == want), None)
             if ref is not None:
