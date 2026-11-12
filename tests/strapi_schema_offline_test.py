@@ -113,6 +113,27 @@ async def main():
         patch(OLD, site({}, "blogs", defs=False))
         r0 = await OLD.test({"url": "x", "collection": "blogs"}, "t")
         ok("site without definitions: same suggested map and fields", r["suggestedFieldMap"] == r0["suggestedFieldMap"] and r["fieldKinds"] == r0["fieldKinds"], (r, r0))
+    # languages the CMS offers are learned on Test connection: an Arabic article goes to the Arabic locale with a Latin slug
+    from ext_marketing import website as W2
+    patch(ST, site(LAW, "articles"))
+    t = {"type": "strapi", "settings": {"url": "https://cms.example.com", "collection": "articles", "siteUrl": "https://law.example", "articlePath": "articles"}, "learned": {}}
+    r = await W2.test(t, "t"); t["learned"], t["fieldMap"] = r["learned"], r["suggestedFieldMap"]
+    seen = []
+    def h2(req):
+        if req.method == "POST" and req.url.path == "/api/articles":
+            seen.append((req.url.params.get("locale"), json.loads(req.content)["data"].get("slug")))
+            return httpx.Response(200, json={"data": {"documentId": "d", "slug": json.loads(req.content)["data"].get("slug")}})
+        return site(LAW, "articles")(req)
+    patch(ST, h2)
+    ar = await W2.publish(t, "t", {"title": "عقود", "slug": "صياغة-العقود", "source_slug": "commercial-contracts", "body_html": "<p>س</p>", "language": "ar", "category": "tax"})
+    en = await W2.publish(t, "t", {"title": "Contracts", "slug": "commercial-contracts", "body_html": "<p>x</p>", "language": "en", "category": "tax"})
+    ok("languages learned: Arabic sent to the ar locale", seen[0][0] == "ar", seen)
+    ok("Arabic slug: the source article's Latin slug", seen[0][1] == "commercial-contracts", seen)
+    ok("live links carry the language", ar["url"] == "https://law.example/ar/articles/commercial-contracts" and en["url"].endswith("/en/articles/commercial-contracts"), (ar, en))
+    t2 = {**t, "languages": ["en"]}
+    seen.clear(); await W2.publish(t2, "t", {"title": "عقود", "slug": "x", "body_html": "<p>س</p>", "language": "ar", "category": "tax"})
+    ok("languages set on the connection still win", seen[0][0] is None, seen)
+
     # a CMS that does not answer: a plain message, for test, categories and publish alike
     from ext_marketing import website as W
     def down(req): raise httpx.ConnectError("refused")

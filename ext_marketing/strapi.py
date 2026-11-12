@@ -367,7 +367,9 @@ async def publish(cfg: dict, token: str, post: dict, image: tuple[bytes, str, st
             if fm.get(ours) and v not in (None, ""):
                 _set(data, fm[ours], _fit(v, limits.get(fm[ours])))
         if fm.get("slug"):
-            base = re.sub(r"[^a-z0-9]+", "-", (post.get("slug") or post.get("title") or "post").lower()).strip("-")[:80] or "post"
+            latin = lambda x: re.sub(r"[^a-z0-9]+", "-", (x or "").lower()).strip("-")[:80]   # noqa: E731
+            # a slug in another script (e.g. Arabic) has no Latin letters: the article it was translated from gives its slug
+            base = latin(post.get("slug")) or latin(post.get("title")) or latin(post.get("source_slug")) or "post"
             _set(data, fm["slug"], await _slug_free(c, coll, fm["slug"], base, locale, ver, post.get("document_id")))
         if fm.get("category") and kinds.get(fm["category"]) == "enum":
             want = post.get("category") or cfg.get("defaultCategory")
