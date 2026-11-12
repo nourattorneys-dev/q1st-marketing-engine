@@ -113,5 +113,20 @@ async def main():
         patch(OLD, site({}, "blogs", defs=False))
         r0 = await OLD.test({"url": "x", "collection": "blogs"}, "t")
         ok("site without definitions: same suggested map and fields", r["suggestedFieldMap"] == r0["suggestedFieldMap"] and r["fieldKinds"] == r0["fieldKinds"], (r, r0))
+    # a CMS that does not answer: a plain message, for test, categories and publish alike
+    from ext_marketing import website as W
+    def down(req): raise httpx.ConnectError("refused")
+    def slow(req): raise httpx.ReadTimeout("slow")
+    for name, h in (("not reachable", down), ("timeout", slow)):
+        patch(ST, h)
+        t = {"type": "strapi", "settings": {"url": "https://cms.example.com", "collection": "articles"}, "fieldMap": cfg["fieldMap"], "learned": {}}
+        for call in ("test", "categories", "publish"):
+            try:
+                if call == "publish": await W.publish(t, "t", {"title": "A", "body_html": "<p>x</p>", "language": "en", "category": "tax"})
+                elif call == "categories": await W.categories({**t, "settings": {**t["settings"], "categoryCollection": "cats"}}, "t")
+                else: await W.test(t, "t")
+                ok(f"{name}: {call} gives a plain message", False, "no error")
+            except W.Refused as e:
+                ok(f"{name}: {call} gives a plain message", "Strapi address" in e.message, e.message)
     print(f"\n{P} passed, {F} failed"); sys.exit(1 if F else 0)
 asyncio.run(main())

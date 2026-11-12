@@ -2,6 +2,8 @@
 The portal's form is described by the setting website_target_types; only types with an adapter here are offered."""
 from __future__ import annotations
 
+import httpx
+
 from . import db, strapi, wordpress
 
 S = db.SCHEMA
@@ -11,6 +13,12 @@ class Refused(Exception):
     """The CMS refused or could not be reached; message is shown to the person as it is."""
     def __init__(self, message: str, field: str | None = None):
         super().__init__(message); self.message, self.field = message, field
+
+
+def _unreachable(e: Exception) -> str:
+    """A network failure (no answer, timeout, refused) as a plain message instead of a server error."""
+    what = "did not answer in time" if isinstance(e, httpx.TimeoutException) else "could not be reached"
+    return f"The Strapi address {what}. Check that the CMS is running and try again."
 
 
 # ---------------------------------------------------------------- the Strapi adapter
@@ -25,6 +33,8 @@ async def _strapi_test(t: dict, secret: str) -> dict:
         r = await strapi.test(_strapi_cfg(t), secret)
     except strapi.StrapiError as e:
         raise Refused(e.message, e.field)
+    except httpx.HTTPError as e:
+        raise Refused(_unreachable(e))
     return {"categories": r["categories"], "languages": r["locales"], "fields": r["fields"], "blockTypes": [],
             "suggestedFieldMap": r["suggestedFieldMap"], "note": r.get("note"),
             "learned": {"fieldKinds": r["fieldKinds"], "strapiVersion": r["strapiVersion"], "schema": r.get("schema")}}
@@ -35,6 +45,8 @@ async def _strapi_categories(t: dict, secret: str) -> list:
         return await strapi.categories(_strapi_cfg(t), secret)
     except strapi.StrapiError as e:
         raise Refused(e.message)
+    except httpx.HTTPError as e:
+        raise Refused(_unreachable(e))
 
 
 async def _strapi_check_url(url: str) -> str:
@@ -50,6 +62,8 @@ async def _strapi_publish(t: dict, secret: str, post: dict, image=None, status: 
                                  {**post, "document_id": post.get("external_id")}, image, publish_now=status == "publish")
     except strapi.StrapiError as e:
         raise Refused(e.message, e.field)
+    except httpx.HTTPError as e:
+        raise Refused(_unreachable(e))
     return {"externalId": r["documentId"], "url": r["url"], "slug": r["slug"], "imageUrl": r["imageUrl"], "status": status}
 
 
