@@ -16,11 +16,15 @@ async def for_site(_): return RULES, None
 async def brief(_): return ""
 db.settings, R.for_site, profile.brief = settings, for_site, brief
 
-def run(source_html, lang, first, fixes, src_lang="en"):
+def run(source_html, lang, first, fixes, src_lang="en", fixes_phr=None):
     """first: translation per piece text on the first pass; fixes: list of {piece text: answer} per retry round."""
     calls = {"retry": [], "n": 0}
     async def chat(messages, max_tokens=0, temperature=0):
         sysm, user = messages[0]["content"], json.loads(messages[1]["content"])
+        if "were left untranslated inside" in sysm:                    # the phrase round
+            calls.setdefault("phrase", []).append(user)
+            ph = (fixes_phr or {})
+            return json.dumps({k: {x: ph.get(x, x) for x in v["phrases"]} for k, v in user.items()}, ensure_ascii=False), 1, 1
         if "pieces" not in user:                                      # the short fields
             return json.dumps({"title": "عنوان" if lang == "ar" else "Title", "keywords": []}), 1, 1
         if "left words untranslated" in sysm:
@@ -30,6 +34,7 @@ def run(source_html, lang, first, fixes, src_lang="en"):
         return json.dumps({"pieces": {k: first[v] for k, v in user["pieces"].items()}}, ensure_ascii=False), 1, 1
     llm.chat = chat
     out = asyncio.run(W.translate({"id": "s"}, {"language": src_lang, "content": source_html, "title": "T"}, {"language": lang, "keywords": []}))
+    run.phrase = calls.get("phrase", [])
     return out, calls["retry"]
 
 # 1) legal article, Arabic: two pieces leak English, one keeps a name (Dubai Courts) - only the two are asked again, words named
@@ -51,7 +56,7 @@ first2 = {"Best beaches": "أفضل الشواطئ", "Swim early in the morning.
 worse = {"Swim early in the morning.": "swim early in the morning please"}
 out2, r2 = run(src2, "ar", first2, [worse, worse])
 ok("travel/ar: a worse answer is not kept", "اسبح" in R.text_of(out2["content"]), out2["content"])
-ok("travel/ar: tried as many rounds as allowed", len(r2) == SET["twin_retries"], len(r2))
+ok("travel/ar: tried as many rounds as allowed (whole piece, then phrases)", len(r2) == 1 and len(run.phrase) == SET["twin_retries"] - 1, (len(r2), run.phrase))
 
 # 3) the other direction (Arabic -> English) with Arabic left in: same rule
 src3 = "<p>الضرائب على الشركات</p>"
@@ -59,6 +64,17 @@ first3 = {"الضرائب على الشركات": "Corporate الضرائب"}
 fix3 = {"الضرائب على الشركات": "Corporate taxes"}
 out3, r3 = run(src3, "en", first3, [fix3], src_lang="ar")
 ok("tax/en: Arabic left in English is asked again and fixed", R.text_of(out3["content"]).strip() == "Corporate taxes" and len(r3) == 1, (out3["content"], r3))
+
+# 5) the real case: the model repeats the same leftover tail when asked for the whole piece; the phrase round fixes it
+src5 = "<p>Define force majeure or the scope of indemnity—to ensure it aligns with your intentions. Disputes may go to free zone tribunals.</p>"
+leak = "حدد القوة القاهرة أو نطاق التعويض—to ensure it aligns with your intentions. قد تُحال النزاعات إلى tribunals المناطق الحرة."
+out5, r5 = run(src5, "ar", {src5[3:-4]: leak}, [{src5[3:-4]: leak}],
+               fixes_phr={"to ensure it aligns with your intentions": "لضمان توافقه مع نواياك", "tribunals": "محاكم"})
+t5 = R.text_of(out5["content"])
+ok("contract/ar: whole-piece retry ignored, phrase round fixes it", not R.foreign_words(t5, "ar", RULES, None), t5)
+ok("contract/ar: phrases sent as whole spans with their sentence", run.phrase and "to ensure it aligns with your intentions" in json.dumps(run.phrase, ensure_ascii=False)
+   and "tribunals" in json.dumps(run.phrase), run.phrase)
+ok("contract/ar: the rest of the sentence untouched", "حدد القوة القاهرة" in t5 and "لضمان توافقه مع نواياك" in t5, t5)
 
 # 4) a clean translation makes no extra call
 out4, r4 = run("<p>Hello world.</p>", "ar", {"Hello world.": "مرحبا بالعالم."}, [])

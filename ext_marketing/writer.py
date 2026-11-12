@@ -2,11 +2,13 @@
 A blog article is written section by section, then a small JSON call writes title/slug/meta/photo idea about the
 finished article. A social post is one JSON call. Nothing names Nour or assumes any category."""
 from __future__ import annotations
-import json, re
+import json, logging, re
 
 import markdown as _md
 
 from . import db, llm, profile, research, rules as R, sitepages
+
+log = logging.getLogger("ext_marketing")
 
 LANG = {"en": "English", "ar": "Arabic (Modern Standard, natural for a Gulf audience)"}
 
@@ -378,27 +380,54 @@ async def translate(site: dict, source: dict, twin: dict, note: str | None = Non
             raise ValueError(f"the translation left out {len(missing)} of the article's pieces after every retry")
         for k, v in done.items():
             out[int(k[1:]) - 1] = v
-    # Measured, not trusted: pieces that came back with ordinary words still in another script (e.g. English words left in
-    # the Arabic) are asked again with exactly those words named, as many rounds as the twin retries allow.
-    for _round in range(int(s.get("twin_retries") or 0)):
+    # Measured, not trusted: pieces that came back with ordinary words still in the source language (e.g. English left in
+    # the Arabic) are asked again, as many rounds as the twin retries allow. The first round asks for the whole piece again
+    # with the words named; later rounds ask only for the leftover phrases, in their sentence, and put them in place.
+    # A change is kept only when the piece has fewer leftover words than before.
+    src_pat = (rules.get("_scripts") or {}).get(src_lang)
+    for rnd in range(int(s.get("twin_retries") or 0)):
         stray = {f"p{i + 1}": R.foreign_words(out[i], lang, rules, None) for i in words}
         stray = {k: v for k, v in stray.items() if v}
         if not stray:
             break
-        ask = {k: pieces[int(k[1:]) - 1] for k in stray}
-        raw = await _ask([{"role": "system", "content": guide + "\nYour previous translation of these pieces left words untranslated: "
-                           + "; ".join(f"{k}: {', '.join(v)}" for k, v in stray.items())
-                           + f". Translate each piece again fully into {ln}, with no words left in {sn}."},
-                          {"role": "user", "content": json.dumps({"pieces": ask}, ensure_ascii=False)}],
-                         s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
-        try:
-            obj = llm.json_from(raw)
-        except ValueError:
-            obj = {}
-        got = obj.get("pieces") if isinstance(obj.get("pieces"), dict) else {k: v for k, v in obj.items() if k in ask}
-        for k, v in (got or {}).items():
-            if k in ask and isinstance(v, str) and v.strip() and len(R.foreign_words(v, lang, rules, None)) < len(stray[k]):
-                out[int(k[1:]) - 1] = v.strip()                       # kept only when it has fewer stray words than before
+        log.info("twin %s: round %d, leftover words in %d pieces", twin.get("id"), rnd + 1, len(stray))
+        if rnd == 0 or not src_pat:
+            ask = {k: pieces[int(k[1:]) - 1] for k in stray}
+            raw = await _ask([{"role": "system", "content": guide + "\nYour previous translation of these pieces left words untranslated: "
+                               + "; ".join(f"{k}: {', '.join(v)}" for k, v in stray.items())
+                               + f". Translate each piece again fully into {ln}, with no words left in {sn}."},
+                              {"role": "user", "content": json.dumps({"pieces": ask}, ensure_ascii=False)}],
+                             s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
+            try:
+                obj = llm.json_from(raw)
+            except ValueError:
+                obj = {}
+            got = obj.get("pieces") if isinstance(obj.get("pieces"), dict) else {k: v for k, v in obj.items() if k in ask}
+            cand = {k: v.strip() for k, v in (got or {}).items() if k in ask and isinstance(v, str) and v.strip()}
+        else:
+            tok = f"(?:{src_pat})+(?:['’-](?:{src_pat})+)*"
+            spans = {k: [m.group(0) for m in re.finditer(rf"{tok}(?:\s+{tok})*", out[int(k[1:]) - 1])
+                         if R.foreign_words(m.group(0), lang, rules, None)] for k in stray}
+            spans = {k: v for k, v in spans.items() if v}
+            raw = await _ask([{"role": "system", "content": f"Some {sn} phrases were left untranslated inside {ln} sentences. Give each "
+                               f"phrase in natural {ln} that fits its sentence. Answer ONLY JSON: {{\"<id>\": {{\"<phrase>\": \"<{ln}>\"}}}}."},
+                              {"role": "user", "content": json.dumps({k: {"sentence": out[int(k[1:]) - 1], "phrases": v} for k, v in spans.items()},
+                                                                     ensure_ascii=False)}],
+                             s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
+            try:
+                obj = llm.json_from(raw)
+            except ValueError:
+                obj = {}
+            cand = {}
+            for k, v in spans.items():
+                fixed, ans = out[int(k[1:]) - 1], obj.get(k) if isinstance(obj.get(k), dict) else {}
+                for ph in v:
+                    if isinstance(ans.get(ph), str) and ans[ph].strip():
+                        fixed = fixed.replace(ph, ans[ph].strip(), 1)
+                cand[k] = fixed
+        for k, v in cand.items():
+            if len(R.foreign_words(v, lang, rules, None)) < len(stray[k]):
+                out[int(k[1:]) - 1] = v
     content = M.rebuild(source["content"] or "", out)
     # the short fields: translated together, lengths measured against the site's bands (one retry with the measured values)
     fields = {"title": source.get("title") or "", "subtitle": source.get("subtitle") or "", "metaTitle": source.get("meta_title") or "",
