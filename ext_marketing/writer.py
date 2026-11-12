@@ -378,6 +378,27 @@ async def translate(site: dict, source: dict, twin: dict, note: str | None = Non
             raise ValueError(f"the translation left out {len(missing)} of the article's pieces after every retry")
         for k, v in done.items():
             out[int(k[1:]) - 1] = v
+    # Measured, not trusted: pieces that came back with ordinary words still in another script (e.g. English words left in
+    # the Arabic) are asked again with exactly those words named, as many rounds as the twin retries allow.
+    for _round in range(int(s.get("twin_retries") or 0)):
+        stray = {f"p{i + 1}": R.foreign_words(out[i], lang, rules, None) for i in words}
+        stray = {k: v for k, v in stray.items() if v}
+        if not stray:
+            break
+        ask = {k: pieces[int(k[1:]) - 1] for k in stray}
+        raw = await _ask([{"role": "system", "content": guide + "\nYour previous translation of these pieces left words untranslated: "
+                           + "; ".join(f"{k}: {', '.join(v)}" for k, v in stray.items())
+                           + f". Translate each piece again fully into {ln}, with no words left in {sn}."},
+                          {"role": "user", "content": json.dumps({"pieces": ask}, ensure_ascii=False)}],
+                         s["twin_max_tokens"], float(s.get("twin_temperature") or 0.2), tk)
+        try:
+            obj = llm.json_from(raw)
+        except ValueError:
+            obj = {}
+        got = obj.get("pieces") if isinstance(obj.get("pieces"), dict) else {k: v for k, v in obj.items() if k in ask}
+        for k, v in (got or {}).items():
+            if k in ask and isinstance(v, str) and v.strip() and len(R.foreign_words(v, lang, rules, None)) < len(stray[k]):
+                out[int(k[1:]) - 1] = v.strip()                       # kept only when it has fewer stray words than before
     content = M.rebuild(source["content"] or "", out)
     # the short fields: translated together, lengths measured against the site's bands (one retry with the measured values)
     fields = {"title": source.get("title") or "", "subtitle": source.get("subtitle") or "", "metaTitle": source.get("meta_title") or "",
