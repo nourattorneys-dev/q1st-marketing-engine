@@ -100,7 +100,10 @@ async def test_website(site_id: str, req: Request):
     secret = _secret(d) or security.decrypt((row or {}).get("secret_enc"))
     if not secret:
         return ok({"ok": False, "error": "Give the password or token to test with.", "fields": {"secret": "Required"}})
-    saved = row is not None and not _secret(d) and all(k not in d for k in ("type", "settings"))
+    # The saved connection was tested when the form sent the same type and connection fields (sending them is fine):
+    # then what the test learned about the website (its fields, languages) is stored with it.
+    saved = (row is not None and not _secret(d) and t.get("type") == cur.get("type")
+             and all((t["settings"].get(k) or None) == ((cur.get("settings") or {}).get(k) or None) for k in CONNECT))
     try:
         res = await W.test(t, secret)
     except W.Refused as e:
